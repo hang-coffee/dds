@@ -3,7 +3,7 @@
 # ============================================================
 
 CC       = gcc
-CFLAGS   = -Wall -Wextra -O2 -g -Isrc -MMD -MP
+CFLAGS   = -std=gnu16 -Wall -Wextra -O2 -g -Isrc -MMD -MP
 LDFLAGS  = -lm
 
 TARGET   = build/bin/doctor_sim
