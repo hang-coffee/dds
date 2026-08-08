@@ -5,6 +5,13 @@
 
 完善`manual.md`，增加PIT、UART、KBD相关代码。
 
+## 编译方法
+推荐使用GCC编译器。在命令行中输入：
+```bash
+make
+```
+即可编译。输出的文件位于build/内。
+
 ## 关于版权
     Copyright (C) 2026  Hangco(hang-coffee)
 
