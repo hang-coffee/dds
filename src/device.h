@@ -60,6 +60,8 @@ struct Device_mgr_t {
 	Device *head;
 	int count;
 	uint64_t total_cycles;
+
+	bool last_dev_not_found;					// 上一次查找时没有找到设备
 };
 
 void device_register(DOCTOR_CPU *cpu, Device *dev);

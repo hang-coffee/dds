@@ -13,15 +13,17 @@ void device_register(DOCTOR_CPU *cpu, Device *dev) {
 Device *device_find(DOCTOR_CPU *cpu, uint16_t port) {
     if (!cpu) return NULL;
     Device *cur = cpu->dev_mgr.head;
+	cpu->dev_mgr.last_dev_not_found=false;
     while (cur) {
         // 防止 base_port=0xFFFF + port_cnt=2 时溢出
         if (cur->port_cnt > 0 &&
             (uint32_t)port >= cur->base_port &&
             (uint32_t)port < (uint32_t)cur->base_port + cur->port_cnt) {
-            return cur;
+				return cur;
         }
         cur = cur->next;
     }
+	cpu->dev_mgr.last_dev_not_found=true;
     return NULL;
 }
 uint32_t device_read(DOCTOR_CPU *cpu, uint16_t port, uint8_t size) {

@@ -986,7 +986,42 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			}
 			break;
 		case IN:
-			//
+			if(instr->op1==0xe || instr->op1==0xf || instr->op2==0xe || instr->op_size==0) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			if(instr->op2==0xf) nval=instr->imm;
+			else nval=(*op2reg(cpu, instr->op2));
+			res=device_read(cpu, nval, instr->op_size);
+			if(cpu->dev_mgr.last_dev_not_found)	{		// 如果设备不存在就触发#II 
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			switch(instr->op_size) {
+				case 1:
+					mask=0xffffff00;
+					break;
+				case 2:
+					mask=0xffff0000;
+					break;
+				case 3:
+					mask=0x00000000;
+					break;
+				default:
+					exe_err(cpu);
+					err=1;
+					return err;
+			}
+			if(instr->has_nz) {
+				res&=(~mask);
+				res|=((*op2reg(cpu, instr->op1))&mask);
+			} else {
+				res&=(~mask);
+			}
+			(*op2reg(cpu, instr->op1))=res;
+			break;
 		default:
 			exe_err(cpu);
 			err=1;
