@@ -1,0 +1,19 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-Wall",
+      "-Wextra",
+      "-O2",
+      "-g",
+      "-Isrc",
+      "-c",
+      "-o",
+      "build/obj/decode.o",
+      "src/decode.c"
+    ],
+    "directory": "/home/hangco/doctor-emu",
+    "file": "/home/hangco/doctor-emu/src/decode.c",
+    "output": "/home/hangco/doctor-emu/build/obj/decode.o"
+  }
+]
