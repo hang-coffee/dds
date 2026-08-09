@@ -7,6 +7,7 @@ void device_register(DOCTOR_CPU *cpu, Device *dev) {
     dev->next = cpu->dev_mgr.head;
     cpu->dev_mgr.head = dev;
     cpu->dev_mgr.count++;
+	dev->cpu=cpu;
     if (dev->ops && dev->ops->init)   // 注册时立即初始化
         dev->ops->init(dev);
 }
@@ -55,7 +56,7 @@ void device_tick_all(DOCTOR_CPU *cpu, uint64_t cycles) {
     while (cur) {
         Device *next = cur->next;          // 提前保存
         if (cur->ops && cur->ops->tick)
-            cur->ops->tick(cur);
+            cur->ops->tick(cur, cycles);
         cur = next;
     }
 }

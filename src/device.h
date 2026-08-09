@@ -26,7 +26,7 @@ typedef struct Device_mgr_t Device_mgr;
 
 struct Device_ops_t {
 	void (*init)(Device *dev);					// 设备初始化
-	void (*tick)(Device *dev);					// 每一轮都要调用的函数
+	void (*tick)(Device *dev, uint64_t d_tick);	// 每一轮都要调用的函数
 
 	uint32_t (*read_port)(Device *dev,			// 从指定端口读取
 			uint16_t port, uint8_t size);
@@ -52,7 +52,9 @@ struct Device_t {								// 设备结构体
 	uint8_t irq;								// IRQ
 	void *private_data;							// 私有数据
 	const Device_ops *ops;						// 操作
-	
+
+	DOCTOR_CPU *cpu;
+
 	Device *next;
 };
 
