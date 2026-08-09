@@ -1,6 +1,7 @@
 #include "execution.h"
 #include "mem.h"
 #include "debugger.h"
+#include "interrupt.h"
 #include <stdio.h>
 
 static inline void jmp(DOCTOR_CPU *cpu) {
@@ -9,7 +10,8 @@ static inline void jmp(DOCTOR_CPU *cpu) {
 }
 
 int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
-//	exe_err(cpu);
+//	fprintf(stderr, "INFO: P=0x%08X, INSTR=%u %u %u, %u (imm=%08X)\n", 
+//			cpu->P, instr->opcode, instr->op_size, instr->op1, instr->op2, instr->imm);
 	int err=0;
 	uint32_t res=0;
 	switch(instr->opcode) {
@@ -1021,6 +1023,78 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				res&=(~mask);
 			}
 			(*op2reg(cpu, instr->op1))=res;
+			break;
+		case OUT:
+			if(instr->op1==0xe || instr->op2==0xe) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			if(instr->op1==0xf) nval=instr->imm;
+			else nval=(*op2reg(cpu, instr->op1));
+			if(instr->op2==0xf) res=instr->imm;
+			else res=(*op2reg(cpu, instr->op2));
+			switch(instr->op_size) {
+				case 1:
+					mask=0xff;
+					break;
+				case 2:
+					mask=0xffff;
+					break;
+				case 3:
+					mask=0xffffffff;
+					break;
+				default:
+					exe_err(cpu);
+					err=1;
+					return err;
+			}
+			res&=mask;
+			device_write(cpu, (uint16_t)nval, res, instr->op_size);
+			if(cpu->dev_mgr.last_dev_not_found) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			break;
+		case INT:
+			if(instr->op1==0xe) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			if(instr->op1==0xf) nval=instr->imm;
+			else nval=(*op2reg(cpu, instr->op1));
+			res=handle_intr(cpu, (uint8_t)(nval&0xff));
+			if(res) {
+				exe_err(cpu);
+				err=res;
+				return err;
+			}
+			break;
+		case PUSH_RIN1:
+			push(cpu, cpu->intr.rin1, 3);
+			break;
+		case PUSH_RIN2:
+			push(cpu, cpu->intr.rin2, 3);
+			break;
+		case POP_RIN1:
+			cpu->intr.rin1=pop(cpu, 3);
+			break;
+		case POP_RIN2:
+			cpu->intr.rin2=pop(cpu, 3);
+			break;
+		case PUSHI:
+			pushi(cpu);
+			break;
+		case POPI:
+			popi(cpu);
+			break;
+		case HLT:
+			cpu->halted=1;
+			break;
+		case IRET:
+			iret(cpu);
 			break;
 		default:
 			exe_err(cpu);

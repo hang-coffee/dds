@@ -1,6 +1,7 @@
 #include <signal.h>
 #include <setjmp.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "debugger.h"
 
 #include "cpu.h"
@@ -15,7 +16,7 @@ void handle_sigint(int sig) {
 }
 
 void exe_err(DOCTOR_CPU *cpu) {
-	fprintf(stderr, "P=0x%08X\nRegister dump:\n", cpu->P);
+	fprintf(stderr, "\nP=0x%08X\nRegister dump:\n", cpu->P);
 	fprintf(stderr, "E =0x%08X\t\tS =0x%08X\t\tT =0x%08X\t\tA =0x%08X\n",
 					(*op2reg(cpu, REG_E)), (*op2reg(cpu, REG_S)), (*op2reg(cpu, REG_T)), (*op2reg(cpu, REG_A)));
 	fprintf(stderr, "B =0x%08X\t\tF =0x%08X\t\tR =0x%08X\t\tC =0x%08X\n",
@@ -27,4 +28,5 @@ void exe_err(DOCTOR_CPU *cpu) {
 					cpu->intr.rin1, cpu->intr.rin2, cpu->intr.ictb, cpu->intr.ctrl);
 	return;
 }
+
 

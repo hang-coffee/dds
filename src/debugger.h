@@ -5,7 +5,5 @@
 
 void handle_sigint(int sig);
 void exe_err(DOCTOR_CPU *cpu);
-
-
 #endif
 

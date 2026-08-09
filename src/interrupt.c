@@ -27,7 +27,7 @@ int handle_intr(DOCTOR_CPU *cpu, uint8_t irq_num) {
 			if(isr_get_ipl(cpu, irq_num)>=isr_get_ipl(cpu, cpu->intr.current_int) && isr_get_inl(cpu, irq_num)) return -2;
 		}
 	} else {									// 说明是异常/NMI/SVC
-		exe_err(cpu);
+//		exe_err(cpu);
 		flag_unblockable=true;
 //		return -3;
 	}
@@ -38,7 +38,7 @@ int handle_intr(DOCTOR_CPU *cpu, uint8_t irq_num) {
 	if(isr_get_dpl(cpu, irq_num) < cpu->intr.cpl && !(flag_unblockable)) {			// 不允许执行，因为越权
 		exe_err(cpu);
 		cpu->intr.exception=ERR_GP;
-		return -4;
+		return ERR_GP;
 	}
 	// 压栈
 	push(cpu, cpu->intr.ictb, 3);
@@ -73,7 +73,7 @@ void iret(DOCTOR_CPU *cpu) {
 	if(isr_get_ss(cpu, irq_num)) {				// 如果当前中断允许了SS
 		(*op2reg(cpu, REG_S))=load_dword_from_mem(cpu, cpu->sys.ksp, MEM_TYPE_DATA);
 	}
-	cpu->intr.current_int=pop(cpu, 3);
+	cpu->intr.current_int=pop(cpu, 1);
 	cpu->P=pop(cpu, 3);
 	cpu->intr.ctrl=pop(cpu, 3);
 	cpu->intr.ictb=pop(cpu, 3);
@@ -81,6 +81,7 @@ void iret(DOCTOR_CPU *cpu) {
 	if(irq_num-(cpu->intr.irq_base)<32 && (cpu->intr.irq_base)<=irq_num) {
 		set_intr_info(&(cpu->intr.rin2), (irq_num-(cpu->intr.irq_base)), 0);	// 清除中断挂起
 	}
+	exe_err(cpu);
 	return;
 }
 
@@ -100,3 +101,18 @@ void hlt(DOCTOR_CPU *cpu) {
 	return;
 }
 
+void pushi(DOCTOR_CPU *cpu) {
+	cpu->intr.inside_ppi=true;
+	push(cpu, cpu->intr.ictb, 3);
+	push(cpu, cpu->intr.ctrl, 3);
+	update_intr_context(&(cpu->intr));
+	return;
+}
+
+void popi(DOCTOR_CPU *cpu) {
+	cpu->intr.ctrl=pop(cpu, 3);
+	cpu->intr.ictb=pop(cpu, 3);
+	cpu->intr.inside_ppi=false;
+	update_intr_context(&(cpu->intr));
+	return;
+}

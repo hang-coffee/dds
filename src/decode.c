@@ -34,6 +34,7 @@ int decode(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 	instr->op_size=(membyte&0x60)>>5;					// 操作数尺寸
 	instr->has_nz=((membyte&0x10)!=0)?(true):(false);	// bit 4 --> nz
 	uint8_t needed_bytes=(membyte&0x0f);				// bit 3~0
+//	fprintf(stderr, "total bytes=%u\n", needed_bytes);
 	// 解析 byte1
 	membyte=get_next_byte(cpu);
 	instr->opcode=(membyte&0x7f);						// 最高位保留
