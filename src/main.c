@@ -10,11 +10,12 @@
 
 DOCTOR_CPU cpu;
 static sigjmp_buf sigsegv_env;
-static DOCTOR_CPU *current_cpu;
 static volatile sig_atomic_t segv_occ=0;
 
 static void handle_sigsegv(int sig, siginfo_t *info, void *context) {
 	sig=sig;
+	info=info;
+	context=context;
 	signal(SIGSEGV, SIG_DFL);
 	segv_occ=1;
 	siglongjmp(sigsegv_env, 1);

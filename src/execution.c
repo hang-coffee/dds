@@ -1096,6 +1096,81 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 		case IRET:
 			iret(cpu);
 			break;
+		case BLKS:
+			if(instr->op1==0xe) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			if(instr->op1==0xf) {
+				res=instr->imm;
+			} else {
+				res=(*op2reg(cpu, instr->op1));
+			}
+			for(uint32_t i=0; i<(*op2reg(cpu, REG_C)); i++) {
+				switch(instr->op_size) {
+					case 1:
+						set_mem(cpu, (*op2reg(cpu, REG_R))+i, res, MEM_TYPE_DATA);
+						break;
+					case 2:
+						set_word_mem(cpu, (*op2reg(cpu, REG_R))+i, res, MEM_TYPE_DATA);
+						break;
+					case 3:
+						set_dword_mem(cpu, (*op2reg(cpu, REG_R))+i, res, MEM_TYPE_DATA);
+						break;
+					default:
+						exe_err(cpu);
+						err=1;
+						return err;
+				}
+			}
+			break;
+		case PUSH_P:
+			push(cpu, cpu->P, instr->op_size);
+			break;
+		case NOP:
+			break;
+		case INC:
+			if(instr->op1==0xe || instr->op1==0xf) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			(*op2reg(cpu, instr->op1))++;
+			break;
+		case DEC:
+			if(instr->op1==0xe || instr->op1==0xf) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			(*op2reg(cpu, instr->op1))--;
+			break;
+		case BLKIN:
+			if(instr->op1==0xe || instr->op1==0xf) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			for(uint32_t i=0; i<(*op2reg(cpu, REG_C)); i++) {
+				res=device_read(cpu, (uint16_t)((*op2reg(cpu, REG_A))&0xffff), instr->op_size);
+				switch(instr->op_size) {
+					case 1:
+						set_mem(cpu, (*op2reg(cpu, instr->op1))+i, res, (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+						break;
+					case 2:
+						set_word_mem(cpu, (*op2reg(cpu, instr->op1))+i, res, (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+						break;
+					case 3:
+						set_dword_mem(cpu, (*op2reg(cpu, instr->op1))+i, res, (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+						break;
+					default:
+						exe_err(cpu);
+						err=1;
+						return err;
+				}
+			}
+			break;
 		default:
 			exe_err(cpu);
 			err=1;

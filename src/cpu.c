@@ -4,6 +4,11 @@
 #include <string.h>
 #include "decode.h"
 #include "execution.h"
+#include "interrupt.h"
+
+#include "devices/pit.h"
+
+Device dev_pit;
 
 void cpu_init(DOCTOR_CPU *cpu) {
 	cpu->code_mem=(uint8_t *)calloc(CODE_SIZE, 1);
@@ -37,6 +42,9 @@ void cpu_init(DOCTOR_CPU *cpu) {
 	cpu->intr.inl=0;
 	cpu->intr.exception=0;
 	cpu->intr.cpl=0;
+
+	pit_init(&dev_pit);
+	device_register(cpu, &dev_pit);
 
 	return;
 }
@@ -84,7 +92,8 @@ void cpu_run(DOCTOR_CPU *cpu) {
 			fprintf(stderr, "INFO: ERR: #II\n");
 		} 
 		if(err==2) {
-			fprintf(stderr, "INFO: ERR: #DIV0\n");
+			fprintf(stderr, "INFO: ERR: #DIV\n");
+			handle_intr(cpu, 0);
 		}
 		if(err_cnt==2) {
 			fprintf(stderr, "FATAL: DOUBLE ERR\n");

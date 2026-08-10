@@ -19,6 +19,14 @@ static inline uint8_t pit_get_tu(uint8_t ctrl) {
 	return ((ctrl&0x18)>>3);
 }
 
+static inline uint8_t pit_get_ie(uint8_t ctrl) {
+	return ((ctrl&0x40)>>6);
+}
+
+static inline uint8_t pit_get_se(uint8_t ctrl) {
+	return ((ctrl&0x20)>>5);
+}
+
 void pit_init(Device *dev) {
 	Dev_PIT *priv=calloc(1, sizeof(Dev_PIT));
 	if(!priv) {
@@ -79,10 +87,9 @@ void pit_tick(Device *dev, uint64_t d_tick) {
 		default:
 			break;
 	}
-	if(units>0) {
+	if(units>0 && ((Dev_PIT *)(dev->private_data))->counter!=0) {
 		((Dev_PIT *)(dev->private_data))->counter-=units;
 	}
-	if(((Dev_PIT *)(dev->private_data))->counter<0) ((Dev_PIT *)(dev->private_data))->counter=0;
 	if(((Dev_PIT *)(dev->private_data))->counter==0) {
 		if(pit_get_ie(ctrl)) {
 			if(!((Dev_PIT *)(dev->private_data))->triggered) {
@@ -98,5 +105,47 @@ void pit_tick(Device *dev, uint64_t d_tick) {
 	}
 }
 
-// TODO: 在重新写入ctrl寄存器后，将triggered设置为false；写ie和se的获取函数；写很多函数
+uint32_t pit_read_port(Device *dev, uint16_t port, uint8_t size) {
+	if(!dev->private_data) return 0xffffffff;
+	size=size;
+	if(port==PIT_BASE_PORT) return (uint32_t)(((Dev_PIT *)(dev->private_data))->ctrl);
+	else return (uint32_t)(((Dev_PIT *)(dev->private_data))->counter);
+}
+
+void pit_write_port(Device *dev, uint16_t port, uint32_t data, uint8_t size) {
+	if(!dev->private_data) return;
+	size=size;
+	if(port==PIT_BASE_PORT) {
+		((Dev_PIT *)(dev->private_data))->ctrl=(uint8_t)(data&0xff);
+		((Dev_PIT *)(dev->private_data))->triggered=false;
+	} else {
+		((Dev_PIT *)(dev->private_data))->rel=data;
+	}
+	((Dev_PIT *)(dev->private_data))->will_reload=true;
+	return;
+}
+
+void pit_reset(Device *dev) {
+	if(!dev->private_data) return;
+	((Dev_PIT *)(dev->private_data))->ctrl=0x00;
+	((Dev_PIT *)(dev->private_data))->rel=0;
+	((Dev_PIT *)(dev->private_data))->counter=0;
+	((Dev_PIT *)(dev->private_data))->accu_ns=0;
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	((Dev_PIT *)(dev->private_data))->last_time_ns=time2ns(now);
+	((Dev_PIT *)(dev->private_data))->triggered=0;
+	((Dev_PIT *)(dev->private_data))->will_reload=0;
+	return;
+}
+
+void pit_dump(Device *dev) {
+	fprintf(stderr, "INFO: device name=%s\n", dev->name);
+}
+
+void pit_destroy(Device *dev) {
+	if(dev->private_data) free(dev->private_data);
+	dev->private_data=NULL;
+	return;
+}
 

@@ -65,6 +65,11 @@ static inline void set_mem(DOCTOR_CPU *cpu, uint32_t ptr, uint8_t num, uint8_t m
 	return;
 }
 
+static inline void set_word_mem(DOCTOR_CPU *cpu, uint32_t ptr, uint32_t num, uint8_t mem_type) {
+	set_mem(cpu, ptr, (uint8_t)((num&0x000000ff)), mem_type);
+	set_mem(cpu, ptr+1, (uint8_t)((num&0x0000ff00)>>8), mem_type);
+}
+
 static inline void set_dword_mem(DOCTOR_CPU *cpu, uint32_t ptr, uint32_t num, uint8_t mem_type) {
 	set_mem(cpu, ptr, (uint8_t)((num&0x000000ff)), mem_type);
 	set_mem(cpu, ptr+1, (uint8_t)((num&0x0000ff00)>>8), mem_type);
