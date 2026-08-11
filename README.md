@@ -1,9 +1,9 @@
 # doctor-emu - DOCTOR 的模拟器
 
 ## TODO
-完善关于设备的相关函数（见`device.h`），完善更全面的显示功能（包括增加`Display`层，用于控制显示），
+完善MPU功能、完善更全面的显示功能（包括增加`Display`层，用于控制“显示”）、
 
-完善`manual.md`，增加PIT、UART、KBD相关代码。
+完善`manual.md`、增加UART、KBD相关代码。
 
 ## 编译方法
 推荐使用GCC编译器。在命令行中输入：
