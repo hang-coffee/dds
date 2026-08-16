@@ -10,9 +10,9 @@
 #include <stdio.h>
 
 static bool kbc_out_push(Dev_KBC *k, uint8_t byte) {
-	if(k->out_count >= 2) return false;		// FIFO 满（真实场景 CPU 应已读走前一字节）
+	if(k->out_count >= 16) return false;		// FIFO 满（宿主输入突发时缓冲）
 	k->out_buf[k->out_tail]=byte;
-	k->out_tail=(k->out_tail+1)%2;
+	k->out_tail=(k->out_tail+1)%16;
 	k->out_count++;
 	return true;
 }
@@ -20,7 +20,7 @@ static bool kbc_out_push(Dev_KBC *k, uint8_t byte) {
 static uint8_t kbc_out_pop(Dev_KBC *k) {
 	if(k->out_count==0) return 0x00;
 	uint8_t b=k->out_buf[k->out_head];
-	k->out_head=(k->out_head+1)%2;
+	k->out_head=(k->out_head+1)%16;
 	k->out_count--;
 	return b;
 }
@@ -154,7 +154,7 @@ bool kbc_inject_scancode(DOCTOR_CPU *cpu, uint8_t byte) {
 	Device *dev=device_find(cpu, KBC_PORT_DATA);
 	if(!dev || !dev->private_data) return false;
 	Dev_KBC *k=(Dev_KBC *)dev->private_data;
-	if(k->out_count >= 2) return false;		// 缓冲满
+	if(k->out_count >= 16) return false;		// 缓冲满
 	return kbc_out_push(k, byte);
 }
 

@@ -44,30 +44,39 @@ void input_init(void) {
 	return;
 }
 
-// 注入一个按键事件（make 码；E0 扩展键为 0xE0 + 码）
-static void kbd_send(DOCTOR_CPU *cpu, uint8_t make) {
+// 注入按键事件: make + break（Shift 修饰时先 Shift make、后 Shift break）
+static void kbd_send_key(DOCTOR_CPU *cpu, uint8_t make, bool need_shift) {
+	if(need_shift) kbc_inject_scancode(cpu, 0x2A);		// LShift make
 	kbc_inject_scancode(cpu, make);
+	kbc_inject_scancode(cpu, make | 0x80);
+	if(need_shift) kbc_inject_scancode(cpu, 0xAA);		// LShift break
 }
 
 static void kbd_send_e0(DOCTOR_CPU *cpu, uint8_t code) {
 	kbc_inject_scancode(cpu, 0xE0);
 	kbc_inject_scancode(cpu, code);
+	kbc_inject_scancode(cpu, 0xE0);
+	kbc_inject_scancode(cpu, code | 0x80);
 }
 
-// ASCII 字符 → Set 1 make 码（小写/上档字符映射到基础键）
-static uint8_t ascii_to_set1(char c) {
+// ASCII 字符 → Set 1 make 码 + 是否需要 Shift 修饰
+static uint8_t ascii_to_set1(char c, bool *need_shift) {
 	unsigned char ch=(unsigned char)c;
-	if(ch>='A' && ch<='Z') ch=(unsigned char)(ch+32);	// 转小写
+	*need_shift=false;
+	if(ch>='A' && ch<='Z') { *need_shift=true; ch=(unsigned char)(ch+32); }
 	switch(ch) {
-		case '!': ch='1'; break; case '@': ch='2'; break; case '#': ch='3'; break;
-		case '$': ch='4'; break; case '%': ch='5'; break; case '^': ch='6'; break;
-		case '&': ch='7'; break; case '*': ch='8'; break; case '(': ch='9'; break;
-		case ')': ch='0'; break;
-		case '_': ch='-'; break; case '+': ch='='; break;
-		case '{': ch='['; break; case '}': ch=']'; break; case '|': ch='\\'; break;
-		case ':': ch=';'; break; case '"': ch='\''; break;
-		case '<': ch=','; break; case '>': ch='.'; break; case '?': ch='/'; break;
-		case '~': ch='`'; break;
+		case '!': *need_shift=true; ch='1'; break; case '@': *need_shift=true; ch='2'; break;
+		case '#': *need_shift=true; ch='3'; break; case '$': *need_shift=true; ch='4'; break;
+		case '%': *need_shift=true; ch='5'; break; case '^': *need_shift=true; ch='6'; break;
+		case '&': *need_shift=true; ch='7'; break; case '*': *need_shift=true; ch='8'; break;
+		case '(': *need_shift=true; ch='9'; break; case ')': *need_shift=true; ch='0'; break;
+		case '_': *need_shift=true; ch='-'; break; case '+': *need_shift=true; ch='='; break;
+		case '{': *need_shift=true; ch='['; break; case '}': *need_shift=true; ch=']'; break;
+		case '|': *need_shift=true; ch='\\'; break;
+		case ':': *need_shift=true; ch=';'; break; case '"': *need_shift=true; ch='\''; break;
+		case '<': *need_shift=true; ch=','; break; case '>': *need_shift=true; ch='.'; break;
+		case '?': *need_shift=true; ch='/'; break;
+		case '~': *need_shift=true; ch='`'; break;
 		default: break;
 	}
 	switch(ch) {
@@ -104,7 +113,7 @@ static void handle_key(DOCTOR_CPU *cpu, uint8_t ch) {
 		if(ch=='[') { esc_state=2; return; }
 		if(ch=='O') { esc_state=3; return; }
 		esc_state=0;
-		kbd_send(cpu, 0x01);			// 裸 ESC 键
+		kbd_send_key(cpu, 0x01, false);			// 裸 ESC 键
 		return;
 	}
 	if(esc_state==2) {
@@ -121,10 +130,10 @@ static void handle_key(DOCTOR_CPU *cpu, uint8_t ch) {
 	if(esc_state==3) {
 		esc_state=0;
 		switch(ch) {					// ESC O P/Q/R/S → F1-F4
-			case 'P': kbd_send(cpu, 0x3B); break;
-			case 'Q': kbd_send(cpu, 0x3C); break;
-			case 'R': kbd_send(cpu, 0x3D); break;
-			case 'S': kbd_send(cpu, 0x3E); break;
+			case 'P': kbd_send_key(cpu, 0x3B, false); break;
+			case 'Q': kbd_send_key(cpu, 0x3C, false); break;
+			case 'R': kbd_send_key(cpu, 0x3D, false); break;
+			case 'S': kbd_send_key(cpu, 0x3E, false); break;
 			default: break;
 		}
 		return;
@@ -147,14 +156,15 @@ static void handle_key(DOCTOR_CPU *cpu, uint8_t ch) {
 		return;							// 暂停期间其它键不转发
 	}
 	switch(ch) {
-		case 0x0D: kbd_send(cpu, 0x1C); return;		// Enter
-		case 0x09: kbd_send(cpu, 0x0F); return;		// Tab
-		case 0x08: case 0x7F: kbd_send(cpu, 0x0E); return;	// Backspace
+		case 0x0D: kbd_send_key(cpu, 0x1C, false); return;		// Enter
+		case 0x09: kbd_send_key(cpu, 0x0F, false); return;		// Tab
+		case 0x08: case 0x7F: kbd_send_key(cpu, 0x0E, false); return;	// Backspace
 		case 0x1B: esc_state=1; return;				// ESC（可能为转义序列）
 		default: break;
 	}
-	uint8_t make=ascii_to_set1((char)ch);
-	if(make) kbd_send(cpu, make);
+	bool need_shift=false;
+	uint8_t make=ascii_to_set1((char)ch, &need_shift);
+	if(make) kbd_send_key(cpu, make, need_shift);
 	return;
 }
 

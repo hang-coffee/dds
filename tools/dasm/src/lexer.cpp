@@ -183,8 +183,14 @@ bool lexer_next_token(lexer_context& ctx, token& out_tok) {
     if (ch == '\'' || ch == '"') {
         char quote = ch;
         ctx.current_pos++;
-        size_t end = line.find(quote, ctx.current_pos);
-        if (end == std::string::npos) {
+        // 手动扫描结束引号（跳过 \ 转义符，支持 \" \' 等转义引号）
+        size_t end = ctx.current_pos;
+        while (end < line.size()) {
+            if (line[end] == '\\') { end += 2; continue; }
+            if (line[end] == quote) break;
+            end++;
+        }
+        if (end >= line.size()) {
             ctx.error = "未闭合的字符串";
             out_tok.type = TOK_UNKNOWN;
             return false;

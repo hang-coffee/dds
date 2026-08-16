@@ -16,7 +16,7 @@ struct Dev_KBC_t {
 	bool cmd_data_flag;			// 最近写入 0x1B(命令)=1 / 0x1A(数据)=0（状态 bit3）
 	bool wait_cmd_byte;			// 等待写命令字节数据
 	// 输出缓冲 FIFO（扫描码/控制器响应）
-	uint8_t out_buf[2];
+	uint8_t out_buf[16];
 	uint8_t out_head;
 	uint8_t out_tail;
 	uint8_t out_count;
