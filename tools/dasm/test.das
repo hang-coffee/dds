@@ -1,0 +1,63 @@
+;; test.asm - DOCTOR架构的启动初始化代码
+	ORG 0x00000000
+	SECTION TEXT
+START:
+	;; 强制关闭中断
+	GETB D1, RIN3_CTRL
+	LET BYTE D2, 0111_1111B
+	AND BYTE D1, D2
+	SETB RIN3_CTRL, D1
+
+	;; 设置栈段
+	LET S, DWORD 0x200000
+	;; 设置CLIMIT, CBASE, DLIMIT, DBASE
+	ZERO X
+	SETB CBASE, X
+	SETB DBASE, X
+	DEC X
+	SETB CLIMIT, X
+	SETB DLIMIT, X
+	;; 设置KSP
+	SETB KSP, S
+
+	;; 将ICT的所有表项填充为“空的”。因为一个表项是一个QWORD,所以需要手写循环
+	LET C, WORD 256				;; 256个表项
+	ZERO I						;; 基址
+	ZERO A						;; 偏移
+CLEAR_ICT:
+	SR DWORD I + A*8 + 0		;; 要写入的地址
+	LET X, DWORD DEFAULT_ICT_GATE
+	ST DWORD *R, X
+	ZERO X
+	ADD R, 4
+	ST DWORD *R, X
+
+	LET E, DWORD SETUP_RIN3
+	DEC C
+	JZ
+	INC A
+	LET E, DWORD CLEAR_ICT
+	JMP
+
+SETUP_RIN3:
+	;; 配置RIN3
+	PUSH DWORD 0
+	PUSH BYTE D1
+	POPI
+
+FIN:							;; 模拟器规定，初始化完毕后跳转到代码0x200处
+	ZERO A
+	ZERO B
+	ZERO C
+	ZERO D1
+	ZERO D2
+	ZERO F
+	ZERO T
+	ZERO X
+	ZERO I
+	LET E, DWORD 0x200
+	JMP
+
+DEFAULT_ICT_GATE:
+	IRET
+

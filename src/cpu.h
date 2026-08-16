@@ -90,7 +90,8 @@ typedef enum {
 } Exceptions;
 
 void cpu_init(DOCTOR_CPU *cpu);
-void cpu_load_bin(DOCTOR_CPU *cpu, const char *filename);
+int cpu_load_bin(DOCTOR_CPU *cpu, const char *filename);		// 加载代码镜像, 返回0=成功, -1=失败
+int cpu_load_data_bin(DOCTOR_CPU *cpu, const char *filename);	// 加载数据镜像, 返回0=成功, -1=失败
 void cpu_run(DOCTOR_CPU *cpu);
 void cpu_free(DOCTOR_CPU *cpu);
 

@@ -92,11 +92,15 @@ inline static uint8_t isr_get_nmo(DOCTOR_CPU *cpu, uint8_t num) {
 void irq_set(DOCTOR_CPU *cpu, uint8_t irq_num);		// 外设请求中断，将RIN2设置为1
 void irq_clear(DOCTOR_CPU *cpu, uint8_t irq_num);	// 清除IRQ挂起
 int get_next_intr(DOCTOR_CPU *cpu);					// 获取下一个挂起的中断，返回其中断号而非IRQ
-int handle_intr(DOCTOR_CPU *cpu, uint8_t irq_num);	// 处理中断发生时的硬件操作
+int handle_intr(DOCTOR_CPU *cpu, uint8_t irq_num, bool is_software);
+	// 处理中断发生时的硬件操作。
+	// is_software=true（INT 指令）：不受全局中断开关（GIE=0 / PUSHI-POPI 内部）影响，总是尝试派发
+	// 返回: 0=成功, -1=中断关闭, -2=嵌套拒绝, -3=派发栈上溢, ERR_GP=越权
 
 void iret(DOCTOR_CPU *cpu);							// 从中断返回
-void raise_exception(DOCTOR_CPU *cpu, uint8_t ex, uint32_t xar);
-void svc(DOCTOR_CPU *cpu);							// 陷入内核
+int raise_exception(DOCTOR_CPU *cpu, uint8_t ex, uint32_t xar);
+	// 触发异常（0x00-0x03 / 0xFF）: 写XAR并派发; 返回0=成功, 非0=派发失败
+int svc(DOCTOR_CPU *cpu);							// 陷入内核（CPL=0, GIE=0, 中断0xFE）
 void hlt(DOCTOR_CPU *cpu);
 void pushi(DOCTOR_CPU *cpu);
 void popi(DOCTOR_CPU *cpu);

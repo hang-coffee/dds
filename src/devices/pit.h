@@ -19,6 +19,7 @@ struct Dev_PIT_t {						// PIT的私有数据
 
 	bool will_reload;					// 是否要重载？
 	bool triggered;						// 是否触发了中断？
+	bool counter_loaded;				// 计数器是否已被写入/重载过（防止TE使能时counter=0误触发）
 };
 
 void pit_init(Device *dev);

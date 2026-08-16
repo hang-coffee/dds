@@ -7,8 +7,12 @@
 #include "interrupt.h"
 
 #include "devices/pit.h"
+#include "devices/fb.h"
+#include "devices/uart.h"
 
 Device dev_pit;
+Device dev_fb;
+Device dev_uart;
 
 void cpu_init(DOCTOR_CPU *cpu) {
 	cpu->code_mem=(uint8_t *)calloc(CODE_SIZE, 1);
@@ -45,61 +49,129 @@ void cpu_init(DOCTOR_CPU *cpu) {
 
 	pit_init(&dev_pit);
 	device_register(cpu, &dev_pit);
+	fb_init(&dev_fb);
+	device_register(cpu, &dev_fb);
+	uart_init(&dev_uart);
+	device_register(cpu, &dev_uart);
 
 	return;
 }
 
-void cpu_load_bin(DOCTOR_CPU *cpu, const char *filename) {
+// 通用的镜像加载: 把文件内容读入内存区
+static int load_file_to_mem(const char *filename, uint8_t *mem, size_t mem_size, const char *what) {
 	FILE *fp=fopen(filename, "rb");
-	if(!fp) {
-		fprintf(stderr, "FATAL: 无法打开文件: %s\n", filename);
-		exit(1);
-	}
+	if(!fp) return -1;						// 文件不存在/无法打开
 	fseek(fp, 0, SEEK_END);
-	size_t file_size=ftell(fp);
+	long file_size=ftell(fp);
 	fseek(fp, 0, SEEK_SET);
-	if(file_size>CODE_SIZE) {
-		fprintf(stderr, "FATAL: 代码文件过大: %s\n", filename);
+	if(file_size<0 || (size_t)file_size>mem_size) {
+		fprintf(stderr, "FATAL: %s文件过大: %s\n", what, filename);
 		fclose(fp);
-		exit(1);
+		return -1;
 	}
-	size_t read_len=fread(cpu->code_mem, 1, file_size, fp);
+	size_t read_len=fread(mem, 1, (size_t)file_size, fp);
 	fclose(fp);
-	fprintf(stderr, "INFO: 成功加载文件: %s, 大小: %zu 字节\n", filename, read_len);
-	return;
+	fprintf(stderr, "INFO: 成功加载%s文件: %s, 大小: %zu 字节\n", what, filename, read_len);
+	return 0;
+}
+
+int cpu_load_bin(DOCTOR_CPU *cpu, const char *filename) {
+	return load_file_to_mem(filename, cpu->code_mem, CODE_SIZE, "代码");
+}
+
+int cpu_load_data_bin(DOCTOR_CPU *cpu, const char *filename) {
+	return load_file_to_mem(filename, cpu->data_mem, DATA_SIZE, "数据");
 }
 
 void cpu_run(DOCTOR_CPU *cpu) {
 	fprintf(stderr, "INFO: CODE: %dMB, DATA: %dMB\n", CODE_SIZE/1024/1024, DATA_SIZE/1024/1024);
-	uint64_t step_cnt=0, err_cnt=0;
-	while((!cpu->halted) && (!sigint_received)) {
-		if(cpu->P>=CODE_SIZE) {
-			fprintf(stderr, "WARNING: P 越界: 0x%08X\n", cpu->P);
-			cpu->P%=CODE_SIZE;
+	uint64_t step_cnt=0;
+	int exc_streak=0;		// 连续异常计数（防止异常风暴/递归）
+	while(!sigint_received) {
+		// 未停机：取指、解码、执行一条指令
+		if(!cpu->halted) {
+			if(cpu->P>=CODE_SIZE) {
+				fprintf(stderr, "WARNING: P 越界: 0x%08X\n", cpu->P);
+				cpu->P%=CODE_SIZE;
+			}
+			Decoded_instr instr;
+			instr_init(&instr);
+			uint32_t instr_addr=cpu->P;		// 指令起始地址（异常 XAR 用）
+			int de=decode(cpu, &instr);
+			if(de==-1) {
+				// 非法指令 → #II。P 前进 2 字节（IRET 返回其后一条指令），不执行。
+				de=2;
+				cpu->P+=de;
+				if(raise_exception(cpu, 0x01, instr_addr)!=0) {
+					fprintf(stderr, "FATAL: 异常派发失败\n");
+					break;
+				}
+				exc_streak++;
+			} else {
+				cpu->P+=de;
+				int err=0;
+				// REP 前缀：以 C 为计数器重复执行。
+				// 语义：while (C != 0) { 执行指令; C--; }
+				// （注意：不要与修改 C 的指令（CSI/CDI/TEST/CMP）组合，否则可能不终止）
+				if(instr.has_rep) {
+					while(cpu->regs[REG_C]!=0 && !cpu->halted) {
+						err=execute(cpu, &instr);
+						if(err) break;
+						cpu->regs[REG_C]--;
+					}
+				} else {
+					err=execute(cpu, &instr);
+				}
+				if(err) {
+					if(err<0) {		// 系统级失败（派发栈上溢等）→ 停机
+						fprintf(stderr, "FATAL: 指令执行失败 (err=%d)\n", err);
+						break;
+					}
+					int hr=0;
+					switch(err) {
+						case 2: hr=raise_exception(cpu, 0x00, instr_addr); break;			// #DIV
+						case 3: hr=raise_exception(cpu, 0x02, cpu->sys.xar); break;			// #STACK
+						case 4: hr=raise_exception(cpu, 0x03, instr_addr); break;			// #GP
+						default: hr=raise_exception(cpu, 0x01, instr_addr); break;			// #II
+					}
+					if(hr!=0) {
+						fprintf(stderr, "FATAL: 异常派发失败 (err=%d, hr=%d)\n", err, hr);
+						break;
+					}
+					exc_streak++;
+				} else {
+					exc_streak=0;
+				}
+			}
+			if(exc_streak>6) {
+				fprintf(stderr, "FATAL: 连续异常过多（异常风暴）\n");
+				break;
+			}
+			step_cnt++;
 		}
-		Decoded_instr instr;
-		instr_init(&instr);
-		int err=0;
-		int de=decode(cpu, &instr);
-		if(de==-1) {
-			de=2;
-//			cpu->halted=1;
+		// 指令边界（或HLT停机等待期间）：tick所有设备
+		device_tick_all(cpu, 1);
+		// 检查挂起的硬件中断，尝试派发
+		int next_intr=get_next_intr(cpu);
+		if(next_intr>=0) {
+			int hr=handle_intr(cpu, (uint8_t)next_intr, false);
+			if(hr==0) {
+				cpu->halted=false;		// 中断成功派发（可唤醒HLT停机）
+			} else if(hr==ERR_GP) {
+				// 中断越权 → 触发 #GP 异常
+				if(raise_exception(cpu, 0x03, cpu->P)!=0) {
+					fprintf(stderr, "FATAL: 异常派发失败\n");
+					break;
+				}
+			} else if(hr==-3) {
+				fprintf(stderr, "FATAL: 中断派发栈上溢\n");
+				break;
+			} else if(hr==-4) {
+				fprintf(stderr, "FATAL: ICT 表项越界（ICTB 无效）\n");
+				break;
+			}
+			// hr==-1(中断关闭) / -2(嵌套拒绝)：保留挂起位，等待下次再试
 		}
-		cpu->P+=de;
-		err=execute(cpu, &instr);
-		if(err) err_cnt++;
-		if(err==1) {
-			fprintf(stderr, "INFO: ERR: #II\n");
-		} 
-		if(err==2) {
-			fprintf(stderr, "INFO: ERR: #DIV\n");
-			handle_intr(cpu, 0);
-		}
-		if(err_cnt==2) {
-			fprintf(stderr, "FATAL: DOUBLE ERR\n");
-			break;
-		}
-		step_cnt++;
 	}
 	fprintf(stderr, "INFO: step_cnt=%lu\n", step_cnt);
 	exe_err(cpu);
@@ -109,5 +181,7 @@ void cpu_run(DOCTOR_CPU *cpu) {
 void cpu_free(DOCTOR_CPU *cpu) {
 	if(cpu->code_mem) free(cpu->code_mem);
 	if(cpu->data_mem) free(cpu->data_mem);
+	// 释放设备私有数据（PIT/FB/UART 等）
+	device_destroy_all(cpu);
 }
 

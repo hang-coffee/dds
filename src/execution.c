@@ -4,9 +4,51 @@
 #include "interrupt.h"
 #include <stdio.h>
 
-static inline void jmp(DOCTOR_CPU *cpu) {
-	cpu->P=*op2reg(cpu, REG_E);
-	return;
+// ============ 内存访问检查（物理边界 + MPU 区间） ============
+// 物理边界（[0, DATA_SIZE) / [0, CODE_SIZE)）总是检查，越界 → #GP，
+// 不再越界访问宿主内存；CTRL bit29 (MPU)=1 时再检查 [DBASE, DLIMIT) /
+// [CBASE, CLIMIT)。异常/NMI/SVC 处理期间 MPU 强制关闭（ISR_NMO=0）。
+
+static inline bool mpu_enabled(DOCTOR_CPU *cpu) {
+	return CTRL_GET_MPU(cpu->intr.ctrl)!=0;
+}
+
+// 数据访问检查：[addr, addr+bytes) 必须在物理范围且（MPU=1 时）⊆ [DBASE, DLIMIT)。
+// bytes=0 时做单点检查。返回 0=允许, 4=越界(#GP)
+static inline int mem_check_data(DOCTOR_CPU *cpu, uint32_t addr, uint32_t bytes) {
+	if(!mem_range_ok(cpu, addr, bytes, MEM_TYPE_DATA)) return 4;	// 物理越界
+	if(!mpu_enabled(cpu)) return 0;
+	if(bytes==0) {
+		return (addr>=cpu->sys.dbase && addr<cpu->sys.dlimit) ? 0 : 4;
+	}
+	if(addr>=cpu->sys.dbase && (uint64_t)addr+bytes <= (uint64_t)cpu->sys.dlimit) return 0;
+	return 4;
+}
+
+// 代码访问检查：[addr, addr+bytes) 必须在物理范围且（MPU=1 时）⊆ [CBASE, CLIMIT)。
+// 返回 0=允许, 4=越界(#GP)
+static inline int mem_check_code(DOCTOR_CPU *cpu, uint32_t addr, uint32_t bytes) {
+	if(!mem_range_ok(cpu, addr, bytes, MEM_TYPE_CODE)) return 4;	// 物理越界
+	if(!mpu_enabled(cpu)) return 0;
+	if(bytes==0) {
+		return (addr>=cpu->sys.cbase && addr<cpu->sys.climit) ? 0 : 4;
+	}
+	if(addr>=cpu->sys.cbase && (uint64_t)addr+bytes <= (uint64_t)cpu->sys.climit) return 0;
+	return 4;
+}
+
+// 栈指针越界 → #STACK 的 XAR 值（bit31: 0=上溢(超出上界), 1=下溢(低于DBASE); 低31位=S新值）
+static inline uint32_t mpu_stack_xar(DOCTOR_CPU *cpu, uint32_t s_new) {
+	if(s_new < cpu->sys.dbase) return 0x80000000u | (s_new & 0x7fffffff);
+	return s_new & 0x7fffffff;
+}
+
+// 跳转：设置 P=E。返回 0=成功；4=跳转目标越界（#GP）
+static inline int jmp(DOCTOR_CPU *cpu) {
+	uint32_t t=*op2reg(cpu, REG_E);
+	if(mem_check_code(cpu, t, 0)) return 4;	// 物理 + MPU: E 必须在代码范围
+	cpu->P=t;
+	return 0;
 }
 
 int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
@@ -16,21 +58,19 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 	uint32_t res=0;
 	switch(instr->opcode) {
 		case LET:
-//			fprintf(stderr, "INFO: P=0x%08X, LET %u %u, %u(0x%08X)\n", 
 			if(instr->op2!=0xf) {
 				exe_err(cpu);
 				err=1;
 			} else {
 				if(instr->has_nz) {
-					res=*op2reg(cpu, instr->op1);
+					// NZ: 高位保留，仅替换低 N 位（按尺寸）
+					uint32_t dest=*op2reg(cpu, instr->op1);
 					switch(instr->op_size) {
 						case 1:
-							res&=0xffffff00;
-							res+=instr->imm;
+							res=(dest&0xffffff00)|(instr->imm&0xff);
 							break;
 						case 2:
-							res&=0xffff0000;
-							res+=instr->imm;
+							res=(dest&0xffff0000)|(instr->imm&0xffff);
 							break;
 						case 3:
 							res=instr->imm;
@@ -41,6 +81,12 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 							return err;
 					}
 				} else res=instr->imm;
+				// MPU: 向 E/S/F 写指针时检查新值所在区间
+				if(instr->op1==REG_E) {
+					if(mem_check_code(cpu, res, 0)) { exe_err(cpu); return 4; }	// #GP
+				} else if(instr->op1==REG_S || instr->op1==REG_F) {
+					if(mem_check_data(cpu, res, 0)) { exe_err(cpu); cpu->sys.xar=mpu_stack_xar(cpu, res); return 3; }	// #STACK
+				}
 				*op2reg(cpu, instr->op1)=res;
 				err=0;
 			}
@@ -51,18 +97,18 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				err=1;
 			} else {
 				if(instr->has_nz) {
-					res=*op2reg(cpu, instr->op1);
+					// NZ: 高位保留，仅替换低 N 位（按尺寸）
+					uint32_t dest=*op2reg(cpu, instr->op1);
 					switch(instr->op_size) {
 						case 1:
-							res&=0xffffff00;
-							res+=((*op2reg(cpu, instr->op2))&0x000000ff);
+							res=(dest&0xffffff00)|((*op2reg(cpu, instr->op2))&0xff);
 							break;
 						case 2:
-							res&=0xffff0000;
-							res+=((*op2reg(cpu, instr->op2))&0x0000ffff);
+							res=(dest&0xffff0000)|((*op2reg(cpu, instr->op2))&0xffff);
 							break;
+						case 0:
 						case 3:
-							res=instr->op2;
+							res=*op2reg(cpu, instr->op2);
 							break;
 						default:
 							exe_err(cpu);
@@ -72,6 +118,8 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				} else {
 					res=*op2reg(cpu, instr->op2);
 					switch(instr->op_size) {
+						case 0:							// 未指定尺寸: 完整DWORD
+							break;
 						case 1:
 							res&=0x000000ff;
 							break;
@@ -86,6 +134,12 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 							return err;
 					}
 				}
+				// MPU: 向 E/S/F 搬运指针时检查新值所在区间
+				if(instr->op1==REG_E) {
+					if(mem_check_code(cpu, res, 0)) { exe_err(cpu); return 4; }	// #GP
+				} else if(instr->op1==REG_S || instr->op1==REG_F) {
+					if(mem_check_data(cpu, res, 0)) { exe_err(cpu); cpu->sys.xar=mpu_stack_xar(cpu, res); return 3; }	// #STACK
+				}
 				*op2reg(cpu, instr->op1)=res;
 				err=0;
 			}
@@ -96,11 +150,8 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				err=1;
 				return err;
 			}
-			if(instr->has_rep) {
-				if((*op2reg(cpu, REG_C))%2==0) {
-					break;
-				}
-			}
+			// 注：REP 的重复语义在 cpu_run() 中统一实现（以 C 为计数器），
+			// 这里不再对 XCHG 做特殊处理
 			uint32_t ne=*op2reg(cpu, instr->op2);
 			*op2reg(cpu, instr->op2)=*op2reg(cpu, instr->op1);
 			*op2reg(cpu, instr->op1)=ne;
@@ -112,6 +163,13 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				return err;
 			}
 			int reg=*op2reg(cpu, instr->op2)+instr->imm;
+			// MPU: 数据指针解引用检查（*E 读代码空间，manual 未列入检查）
+			if(instr->op2!=REG_E && instr->op_size>=1 && instr->op_size<=3) {
+				if(mem_check_data(cpu, (uint32_t)reg, 1u<<(instr->op_size-1))) {
+					exe_err(cpu);
+					return 4;		// #GP
+				}
+			}
 			if(instr->has_nz) {
 				res=*op2reg(cpu, instr->op1);
 				switch(instr->op_size) {
@@ -167,6 +225,13 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				return err;
 			}
 			uint32_t des=(*op2reg(cpu, instr->op1))+instr->imm;
+			// MPU: 数据指针解引用检查（*E 写代码空间，manual 未列入检查）
+			if(instr->op1!=REG_E && instr->op_size>=1 && instr->op_size<=3) {
+				if(mem_check_data(cpu, des, 1u<<(instr->op_size-1))) {
+					exe_err(cpu);
+					return 4;		// #GP
+				}
+			}
 			switch(instr->op_size) {
 				case 1:
 					set_mem(cpu, des, ((*op2reg(cpu, (instr->op2)))&0xff), ((instr->op1)==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
@@ -206,26 +271,23 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			if(instr->op2==0xf) js=instr->imm;
 			else js=(*op2reg(cpu, instr->op2));
 			if(instr->has_nz) {
+				// NZ: 高位保留，低 N 位相加（按尺寸回绕）
 				switch(instr->op_size) {
 					case 1:
-						uint8_t num8=(uint8_t)(nval&0xff);
-						num8+=(uint8_t)(js&0xff);
-						nval=num8;
+						res=(nval&0xffffff00)|((nval+js)&0xff);
 						break;
 					case 2:
-						uint16_t num16=(uint16_t)(nval&0xffff);
-						num16+=(uint16_t)(js&0xffff);
-						nval=num16;
+						res=(nval&0xffff0000)|((nval+js)&0xffff);
 						break;
 					case 3:
-						nval=nval+js;
+						res=nval+js;
 						break;
 					default:
 						exe_err(cpu);
 						err=1;
 						return err;
 				}
-				*op2reg(cpu, instr->op1)=nval;
+				*op2reg(cpu, instr->op1)=res;
 			} else {
 				switch(instr->op_size) {
 					case 1:
@@ -262,26 +324,23 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			if(instr->op2==0xf) jss=-((uint32_t)instr->imm);
 			else jss=-((uint32_t)*op2reg(cpu, instr->op2));
 			if(instr->has_nz) {
+				// NZ: 高位保留，低 N 位相减（按尺寸回绕）
 				switch(instr->op_size) {
 					case 1:
-						uint8_t num8=(uint8_t)(nvals&0xff);
-						num8+=(uint8_t)(jss&0xff);
-						nvals=num8;
+						res=(nvals&0xffffff00)|((nvals+jss)&0xff);
 						break;
 					case 2:
-						uint16_t num16=(uint16_t)(nvals&0xffff);
-						num16+=(uint16_t)(jss&0xffff);
-						nvals=num16;
+						res=(nvals&0xffff0000)|((nvals+jss)&0xffff);
 						break;
 					case 3:
-						nvals=nvals+jss;
+						res=nvals+jss;
 						break;
 					default:
 						exe_err(cpu);
 						err=1;
 						return err;
 				}
-				*op2reg(cpu, instr->op1)=nvals;
+				*op2reg(cpu, instr->op1)=res;
 			} else {
 				switch(instr->op_size) {
 					case 1:
@@ -375,7 +434,6 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			uint64_t dq_1, dq_2;
 			dq_1=((uint64_t)(*op2reg(cpu, REG_D1))<<32)+(*op2reg(cpu, REG_D2));
 			dq_2=((uint64_t)(*op2reg(cpu, REG_A))<<32)+(*op2reg(cpu, REG_B));
-			fprintf(stderr, "INFO: dq_1=0x%lX, dq_2=0x%lX\n", dq_1, dq_2);
 			if(dq_2==0) {
 				exe_err(cpu);
 				err=2;
@@ -397,8 +455,28 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				err=1;
 				return err;
 			}
-			instr->imm &= 0x1f;
-			(*op2reg(cpu, instr->op1))<<=(instr->imm);
+			// 移位数与结果均按尺寸截断（BYTE/WORD/DWORD）
+			{
+				uint32_t sv=*op2reg(cpu, instr->op1);
+				switch(instr->op_size) {
+					case 1:
+						sv=(sv&0xff)<<(instr->imm&0x07);
+						sv&=0xff;
+						break;
+					case 2:
+						sv=(sv&0xffff)<<(instr->imm&0x0f);
+						sv&=0xffff;
+						break;
+					case 3:
+						sv<<=(instr->imm&0x1f);
+						break;
+					default:
+						exe_err(cpu);
+						err=1;
+						return err;
+				}
+				*op2reg(cpu, instr->op1)=sv;
+			}
 			break;
 		case SHR:
 			if(instr->op1==0xe || instr->op1==0xf) {
@@ -406,8 +484,25 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				err=1;
 				return err;
 			}
-			instr->imm &= 0x1f;
-			(*op2reg(cpu, instr->op1))>>=(instr->imm);
+			{
+				uint32_t sv=*op2reg(cpu, instr->op1);
+				switch(instr->op_size) {
+					case 1:
+						sv=(sv&0xff)>>(instr->imm&0x07);
+						break;
+					case 2:
+						sv=(sv&0xffff)>>(instr->imm&0x0f);
+						break;
+					case 3:
+						sv>>=(instr->imm&0x1f);
+						break;
+					default:
+						exe_err(cpu);
+						err=1;
+						return err;
+				}
+				*op2reg(cpu, instr->op1)=sv;
+			}
 			break;
 		case MSR:
 			if(instr->op1==0xe || instr->op1==0xf) {
@@ -415,12 +510,42 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				err=1;
 				return err;
 			}
-			uint8_t msr_sign=(*op2reg(cpu, instr->op1)>>31)&1;
-			instr->imm &= 0x1f;
-			uint32_t msr_res=(*op2reg(cpu, instr->op1));
-			msr_res>>=instr->imm;
-			if(msr_sign && instr->imm>0) msr_res|=(0xffffffff<<(32-instr->imm));
-			(*op2reg(cpu, instr->op1))=msr_res;
+			// 算术右移：按尺寸取符号位并扩展
+			{
+				uint32_t sv=*op2reg(cpu, instr->op1);
+				switch(instr->op_size) {
+					case 1: {
+						uint32_t sign=sv&0x80;
+						uint32_t n=instr->imm&0x07;
+						uint8_t v8=(uint8_t)(sv&0xff);
+						v8=(uint8_t)(v8>>n);
+						if(sign && n>0) v8|=(uint8_t)(0xff<<(8-n));
+						sv=(uint32_t)v8;
+						break;
+					}
+					case 2: {
+						uint32_t sign=sv&0x8000;
+						uint32_t n=instr->imm&0x0f;
+						uint16_t v16=(uint16_t)(sv&0xffff);
+						v16=(uint16_t)(v16>>n);
+						if(sign && n>0) v16|=(uint16_t)(0xffff<<(16-n));
+						sv=(uint32_t)v16;
+						break;
+					}
+					case 3: {
+						uint32_t sign=sv&0x80000000;
+						uint32_t n=instr->imm&0x1f;
+						sv>>=n;
+						if(sign && n>0) sv|=(0xffffffff<<(32-n));
+						break;
+					}
+					default:
+						exe_err(cpu);
+						err=1;
+						return err;
+				}
+				*op2reg(cpu, instr->op1)=sv;
+			}
 			break;
 		case AND:
 			if(instr->op1==0xe || instr->op1==0xf || instr->op2==0xe || instr->op2==0xf) {
@@ -521,7 +646,18 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				err=1;
 				return err;
 			}
-			(*op2reg(cpu, instr->op1))=~(*op2reg(cpu, instr->op1));
+			if(instr->has_nz) {
+				// NZ: 高位保留，低 N 位按位取反
+				uint32_t nv=*op2reg(cpu, instr->op1);
+				switch(instr->op_size) {
+					case 1: nv=(nv&0xffffff00)|(~nv&0xff); break;
+					case 2: nv=(nv&0xffff0000)|(~nv&0xffff); break;
+					default: nv=~nv; break;
+				}
+				*op2reg(cpu, instr->op1)=nv;
+			} else {
+				(*op2reg(cpu, instr->op1))=~(*op2reg(cpu, instr->op1));
+			}
 			break;
 		case MNE:
 			if(instr->op1==0xe || instr->op1==0xf) {
@@ -529,13 +665,33 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				err=1;
 				return err;
 			}
-			(*op2reg(cpu, instr->op1))=-(*op2reg(cpu, instr->op1));
+			if(instr->has_nz) {
+				// NZ: 高位保留，低 N 位算术取反
+				uint32_t nv=*op2reg(cpu, instr->op1);
+				switch(instr->op_size) {
+					case 1: nv=(nv&0xffffff00)|((uint32_t)(-(int32_t)(int8_t)(uint8_t)(nv&0xff))&0xff); break;
+					case 2: nv=(nv&0xffff0000)|((uint32_t)(-(int32_t)(int16_t)(uint16_t)(nv&0xffff))&0xffff); break;
+					default: nv=-nv; break;
+				}
+				*op2reg(cpu, instr->op1)=nv;
+			} else {
+				(*op2reg(cpu, instr->op1))=-(*op2reg(cpu, instr->op1));
+			}
 			break;
 		case PUSH:
 			if(instr->op1==0xe) {
 				exe_err(cpu);
 				err=1;
 				return err;
+			}
+			// MPU: 压栈写区间 [S+1, S+size] 检查
+			if(instr->op_size>=1 && instr->op_size<=3) {
+				uint32_t s_new=*op2reg(cpu, REG_S)+(1u<<(instr->op_size-1));
+				if(mem_check_data(cpu, *op2reg(cpu, REG_S)+1, 1u<<(instr->op_size-1))) {
+					exe_err(cpu);
+					cpu->sys.xar=mpu_stack_xar(cpu, s_new);
+					return 3;		// #STACK
+				}
 			}
 			if(instr->op1==0xf) {
 				err=push(cpu, instr->imm, instr->op_size);
@@ -544,7 +700,11 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			}
 			if(err) {
 				exe_err(cpu);
-				return err;
+				if(err==2) {		// 栈上溢 → #STACK
+					cpu->sys.xar=((uint32_t)(*op2reg(cpu, REG_S))+instr->op_size)&0x7fffffff;
+					return 3;
+				}
+				return 1;			// 尺寸非法 → #II
 			}
 			break;
 		case POP:
@@ -558,17 +718,36 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				err=1;
 				return err;
 			}
+			if((*op2reg(cpu, REG_S))<(1u<<(instr->op_size-1))) {		// 栈下溢 → #STACK
+				exe_err(cpu);
+				cpu->sys.xar=0x80000000u|(((*op2reg(cpu, REG_S))-(1u<<(instr->op_size-1)))&0x7fffffff);
+				return 3;
+			}
+			// MPU: 弹栈读区间 [S-size+1, S] 检查
+			if(instr->op_size>=1 && instr->op_size<=3) {
+				uint32_t s_new=*op2reg(cpu, REG_S)-(1u<<(instr->op_size-1));
+				if(mem_check_data(cpu, s_new+1, 1u<<(instr->op_size-1))) {
+					exe_err(cpu);
+					cpu->sys.xar=mpu_stack_xar(cpu, s_new);
+					return 3;		// #STACK
+				}
+			}
 			res=pop(cpu, instr->op_size);
+			// MPU: 弹栈到 E/S/F 时检查新值所在区间
+			if(instr->op1==REG_E) {
+				if(mem_check_code(cpu, res, 0)) { exe_err(cpu); return 4; }		// #GP
+			} else if(instr->op1==REG_S || instr->op1==REG_F) {
+				if(mem_check_data(cpu, res, 0)) { exe_err(cpu); cpu->sys.xar=mpu_stack_xar(cpu, res); return 3; }	// #STACK
+			}
 			if(instr->has_nz) {
+				// NZ: 高位保留，低 N 位替换为弹栈值
 				nval=(*op2reg(cpu, instr->op1));
 				switch(instr->op_size) {
 					case 1:
-						nval&=0xff;
-						nval+=res;
+						nval=(nval&0xffffff00)|(res&0xff);
 						break;
 					case 2:
-						nval&=0xffff;
-						nval+=res;
+						nval=(nval&0xffff0000)|(res&0xffff);
 						break;
 					case 3:
 						nval=res;
@@ -587,17 +766,71 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				err=1;
 				return err;
 			}
+			if((uint64_t)(*op2reg(cpu, REG_S))+instr->imm>DATA_SIZE) {	// 显式修改S越界 → #STACK
+				exe_err(cpu);
+				cpu->sys.xar=((uint32_t)(*op2reg(cpu, REG_S))+instr->imm)&0x7fffffff;
+				return 3;
+			}
+			// MPU: S 新值必须落在 [DBASE, DLIMIT)
+			{
+				uint32_t s_new=(*op2reg(cpu, REG_S))+instr->imm;
+				if(mem_check_data(cpu, s_new, 0)) {
+					exe_err(cpu);
+					cpu->sys.xar=mpu_stack_xar(cpu, s_new);
+					return 3;		// #STACK
+				}
+			}
 			(*op2reg(cpu, REG_F))=(*op2reg(cpu, REG_S));
 			(*op2reg(cpu, REG_S))+=instr->imm;
 			break;
 		case RER:
-			(*op2reg(cpu, REG_S))=(*op2reg(cpu, REG_F));
-			(*op2reg(cpu, REG_E))=pop(cpu, 3);
+			{
+				uint32_t fv=*op2reg(cpu, REG_F);
+				if(fv>=DATA_SIZE) {		// S=F 越界（上溢）→ #STACK
+					exe_err(cpu);
+					cpu->sys.xar=fv&0x7fffffff;
+					return 3;
+				}
+				if(fv<4) {				// 无法弹出E（下溢）→ #STACK
+					exe_err(cpu);
+					cpu->sys.xar=0x80000000u|((fv-4)&0x7fffffff);
+					return 3;
+				}
+				// MPU: S=F 必须落在 [DBASE, DLIMIT)
+				if(mem_check_data(cpu, fv, 0)) {
+					exe_err(cpu);
+					cpu->sys.xar=mpu_stack_xar(cpu, fv);
+					return 3;			// #STACK
+				}
+				(*op2reg(cpu, REG_S))=fv;
+				(*op2reg(cpu, REG_E))=pop(cpu, 3);
+			}
 			break;
 		case PUSHR:
-			push(cpu, (*op2reg(cpu, REG_R)), 3);
+			// MPU: 压栈写区间 [S+1, S+4] 检查
+			if(mem_check_data(cpu, *op2reg(cpu, REG_S)+1, 4)) {
+				exe_err(cpu);
+				cpu->sys.xar=mpu_stack_xar(cpu, (*op2reg(cpu, REG_S))+4);
+				return 3;				// #STACK
+			}
+			if(push(cpu, (*op2reg(cpu, REG_R)), 3)) {
+				exe_err(cpu);
+				cpu->sys.xar=((uint32_t)(*op2reg(cpu, REG_S))+4)&0x7fffffff;
+				return 3;
+			}
 			break;
 		case POPR:
+			if((*op2reg(cpu, REG_S))<4) {
+				exe_err(cpu);
+				cpu->sys.xar=0x80000000u|(((*op2reg(cpu, REG_S))-4)&0x7fffffff);
+				return 3;
+			}
+			// MPU: 弹栈读区间 [S-3, S] 检查
+			if(mem_check_data(cpu, (*op2reg(cpu, REG_S))-3, 4)) {
+				exe_err(cpu);
+				cpu->sys.xar=mpu_stack_xar(cpu, (*op2reg(cpu, REG_S))-4);
+				return 3;				// #STACK
+			}
 			(*op2reg(cpu, REG_R))=pop(cpu, 3);
 			break;
 		case SRA:
@@ -611,6 +844,13 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				exe_err(cpu);
 				err=1;
 				return err;
+			}
+			// MPU: *R 读取区间检查
+			if(instr->op_size>=1 && instr->op_size<=3) {
+				if(mem_check_data(cpu, *op2reg(cpu, REG_R), 1u<<(instr->op_size-1))) {
+					exe_err(cpu);
+					return 4;		// #GP
+				}
 			}
 			switch(instr->op_size) {
 				case 1:
@@ -639,6 +879,38 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					return err;
 			}
 			(*op2reg(cpu, instr->op1))=res;
+			break;
+		case STO:
+			if(instr->op1==0xe || instr->op1==0xf) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			// MPU: *R 写入区间检查
+			if(instr->op_size>=1 && instr->op_size<=3) {
+				if(mem_check_data(cpu, *op2reg(cpu, REG_R), 1u<<(instr->op_size-1))) {
+					exe_err(cpu);
+					return 4;		// #GP
+				}
+			}
+			switch(instr->op_size) {
+				case 1:
+					set_mem(cpu, (*op2reg(cpu, REG_R)), ((*op2reg(cpu, instr->op1))&0xff), MEM_TYPE_DATA);
+					(*op2reg(cpu, REG_R))++;
+					break;
+				case 2:
+					set_word_mem(cpu, (*op2reg(cpu, REG_R)), (*op2reg(cpu, instr->op1)), MEM_TYPE_DATA);
+					(*op2reg(cpu, REG_R))+=2;
+					break;
+				case 3:
+					set_dword_mem(cpu, (*op2reg(cpu, REG_R)), (*op2reg(cpu, instr->op1)), MEM_TYPE_DATA);
+					(*op2reg(cpu, REG_R))+=4;
+					break;
+				default:
+					exe_err(cpu);
+					err=1;
+					return err;
+			}
 			break;
 		case SR:
 			if(instr->op1==0xf) {
@@ -701,16 +973,16 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			}
 			break;
 		case JMP:
-			jmp(cpu);
+			{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			break;
 		case JZ:
 			if(*op2reg(cpu, REG_C)==0) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case JNZ:
 			if(*op2reg(cpu, REG_C)!=0) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case JRZ:
@@ -736,7 +1008,7 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					return err;
 			}
 			if((res&mask)==0) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case JRNZ:
@@ -762,7 +1034,7 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					return err;
 			}
 			if((res&mask)!=0) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case JA:
@@ -789,7 +1061,7 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			}
 //			fprintf(stderr, "res=%u, instr->op1=%d, C=%u\n", res&mask, instr->op1, (*op2reg(cpu, REG_C)&mask));
 			if(((*op2reg(cpu, REG_C))&mask)>(res&mask)) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case JNA:
@@ -815,7 +1087,7 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					return err;
 			}
 			if((*op2reg(cpu, REG_C)&mask)<=(res&mask)) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case JB:
@@ -841,7 +1113,7 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					return err;
 			}
 			if((*op2reg(cpu, REG_C)&mask)<(res&mask)) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case JNB:
@@ -867,7 +1139,7 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					return err;
 			}
 			if((*op2reg(cpu, REG_C)&mask)>=(res&mask)) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case JG:
@@ -897,7 +1169,7 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			}
 //			fprintf(stderr, "res=%u, instr->op1=%d, C=%u\n", res&mask, instr->op1, (*op2reg(cpu, REG_C)&mask));
 			if(((int32_t)(*op2reg(cpu, REG_C))&mask)>(res&mask)) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case JNG:
@@ -926,7 +1198,7 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					return err;
 			}
 			if(((int32_t)(*op2reg(cpu, REG_C))&mask)<=(res&mask)) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case JL:
@@ -955,7 +1227,7 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					return err;
 			}
 			if(((int32_t)(*op2reg(cpu, REG_C))&mask)<(res&mask)) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case JNL:
@@ -984,7 +1256,7 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					return err;
 			}
 			if(((int32_t)(*op2reg(cpu, REG_C))&mask)>=(res&mask)) {
-				jmp(cpu);
+				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
 		case IN:
@@ -1065,29 +1337,88 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			}
 			if(instr->op1==0xf) nval=instr->imm;
 			else nval=(*op2reg(cpu, instr->op1));
-			res=handle_intr(cpu, (uint8_t)(nval&0xff));
+			res=handle_intr(cpu, (uint8_t)(nval&0xff), true);
 			if(res) {
+				// 软件中断被拒（GIE关/嵌套不允许/越权）→ #GP；
+				// 派发栈上溢 → 系统失败
 				exe_err(cpu);
-				err=res;
-				return err;
+				return ((int)res==-3)?(-3):(4);
 			}
 			break;
 		case PUSH_RIN1:
-			push(cpu, cpu->intr.rin1, 3);
+			if(mem_check_data(cpu, *op2reg(cpu, REG_S)+1, 4)) {
+				exe_err(cpu);
+				cpu->sys.xar=mpu_stack_xar(cpu, (*op2reg(cpu, REG_S))+4);
+				return 3;
+			}
+			if(push(cpu, cpu->intr.rin1, 3)) {
+				exe_err(cpu);
+				cpu->sys.xar=((uint32_t)(*op2reg(cpu, REG_S))+4)&0x7fffffff;
+				return 3;
+			}
 			break;
 		case PUSH_RIN2:
-			push(cpu, cpu->intr.rin2, 3);
+			if(mem_check_data(cpu, *op2reg(cpu, REG_S)+1, 4)) {
+				exe_err(cpu);
+				cpu->sys.xar=mpu_stack_xar(cpu, (*op2reg(cpu, REG_S))+4);
+				return 3;
+			}
+			if(push(cpu, cpu->intr.rin2, 3)) {
+				exe_err(cpu);
+				cpu->sys.xar=((uint32_t)(*op2reg(cpu, REG_S))+4)&0x7fffffff;
+				return 3;
+			}
 			break;
 		case POP_RIN1:
+			if((*op2reg(cpu, REG_S))<4) {
+				exe_err(cpu);
+				cpu->sys.xar=0x80000000u|(((*op2reg(cpu, REG_S))-4)&0x7fffffff);
+				return 3;
+			}
+			if(mem_check_data(cpu, (*op2reg(cpu, REG_S))-3, 4)) {
+				exe_err(cpu);
+				cpu->sys.xar=mpu_stack_xar(cpu, (*op2reg(cpu, REG_S))-4);
+				return 3;
+			}
 			cpu->intr.rin1=pop(cpu, 3);
 			break;
 		case POP_RIN2:
+			if((*op2reg(cpu, REG_S))<4) {
+				exe_err(cpu);
+				cpu->sys.xar=0x80000000u|(((*op2reg(cpu, REG_S))-4)&0x7fffffff);
+				return 3;
+			}
+			if(mem_check_data(cpu, (*op2reg(cpu, REG_S))-3, 4)) {
+				exe_err(cpu);
+				cpu->sys.xar=mpu_stack_xar(cpu, (*op2reg(cpu, REG_S))-4);
+				return 3;
+			}
 			cpu->intr.rin2=pop(cpu, 3);
 			break;
 		case PUSHI:
+			if((uint64_t)(*op2reg(cpu, REG_S))+8>DATA_SIZE) {
+				exe_err(cpu);
+				cpu->sys.xar=((uint32_t)(*op2reg(cpu, REG_S))+8)&0x7fffffff;
+				return 3;
+			}
+			if(mem_check_data(cpu, *op2reg(cpu, REG_S)+1, 8)) {
+				exe_err(cpu);
+				cpu->sys.xar=mpu_stack_xar(cpu, (*op2reg(cpu, REG_S))+8);
+				return 3;
+			}
 			pushi(cpu);
 			break;
 		case POPI:
+			if((*op2reg(cpu, REG_S))<8) {
+				exe_err(cpu);
+				cpu->sys.xar=0x80000000u|(((*op2reg(cpu, REG_S))-8)&0x7fffffff);
+				return 3;
+			}
+			if(mem_check_data(cpu, (*op2reg(cpu, REG_S))-7, 8)) {
+				exe_err(cpu);
+				cpu->sys.xar=mpu_stack_xar(cpu, (*op2reg(cpu, REG_S))-8);
+				return 3;
+			}
 			popi(cpu);
 			break;
 		case HLT:
@@ -1095,6 +1426,65 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			break;
 		case IRET:
 			iret(cpu);
+			break;
+		case SVC:
+			if(svc(cpu)!=0) {		// 派发失败（如栈上溢）→ 系统失败
+				exe_err(cpu);
+				return -3;
+			}
+			break;
+		case SETB:
+			if(cpu->intr.cpl!=0) {	// 用户态执行特权指令 → #GP
+				exe_err(cpu);
+				return 4;
+			}
+			if(instr->op2==0xe || instr->op2==0xf) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			// 注意：SYSREG编码位于op1半字节（见manual 0x40-0x43节）
+			switch(instr->op1) {
+				case 0: cpu->sys.cbase=(*op2reg(cpu, instr->op2)); break;
+				case 1: cpu->sys.climit=(*op2reg(cpu, instr->op2)); break;
+				case 2: cpu->sys.dbase=(*op2reg(cpu, instr->op2)); break;
+				case 3: cpu->sys.dlimit=(*op2reg(cpu, instr->op2)); break;
+				case 4: cpu->sys.ksp=(*op2reg(cpu, instr->op2)); break;
+				case 5: cpu->intr.ctrl=(*op2reg(cpu, instr->op2));
+						update_intr_context(&(cpu->intr));
+						break;
+				case 6: cpu->sys.xar=(*op2reg(cpu, instr->op2)); break;
+				case 7: cpu->intr.ictb=(*op2reg(cpu, instr->op2)); break;
+				default:
+					exe_err(cpu);
+					err=1;
+					return err;
+			}
+			break;
+		case GETB:
+			if(cpu->intr.cpl!=0) {	// 用户态执行特权指令 → #GP
+				exe_err(cpu);
+				return 4;
+			}
+			if(instr->op1==0xe || instr->op1==0xf) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			switch(instr->op2) {
+				case 0: (*op2reg(cpu, instr->op1))=cpu->sys.cbase; break;
+				case 1: (*op2reg(cpu, instr->op1))=cpu->sys.climit; break;
+				case 2: (*op2reg(cpu, instr->op1))=cpu->sys.dbase; break;
+				case 3: (*op2reg(cpu, instr->op1))=cpu->sys.dlimit; break;
+				case 4: (*op2reg(cpu, instr->op1))=cpu->sys.ksp; break;
+				case 5: (*op2reg(cpu, instr->op1))=cpu->intr.ctrl; break;
+				case 6: (*op2reg(cpu, instr->op1))=cpu->sys.xar; break;
+				case 7: (*op2reg(cpu, instr->op1))=cpu->intr.ictb; break;
+				default:
+					exe_err(cpu);
+					err=1;
+					return err;
+			}
 			break;
 		case BLKS:
 			if(instr->op1==0xe) {
@@ -1107,16 +1497,28 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			} else {
 				res=(*op2reg(cpu, instr->op1));
 			}
+			uint32_t blk_step=1<<(instr->op_size-1);	// BYTE=1, WORD=2, DWORD=4
+			// MPU: 批量赋值区间 [R, R+C*step) 检查
+			{
+				uint32_t cnt=*op2reg(cpu, REG_C);
+				if(cnt>0) {
+					uint64_t end=(uint64_t)(*op2reg(cpu, REG_R))+(uint64_t)(cnt-1)*blk_step+(uint64_t)blk_step;
+					if(mem_check_data(cpu, *op2reg(cpu, REG_R), (uint32_t)(end-(*op2reg(cpu, REG_R))))) {
+						exe_err(cpu);
+						return 4;		// #GP
+					}
+				}
+			}
 			for(uint32_t i=0; i<(*op2reg(cpu, REG_C)); i++) {
 				switch(instr->op_size) {
 					case 1:
-						set_mem(cpu, (*op2reg(cpu, REG_R))+i, res, MEM_TYPE_DATA);
+						set_mem(cpu, (*op2reg(cpu, REG_R))+i*blk_step, res, MEM_TYPE_DATA);
 						break;
 					case 2:
-						set_word_mem(cpu, (*op2reg(cpu, REG_R))+i, res, MEM_TYPE_DATA);
+						set_word_mem(cpu, (*op2reg(cpu, REG_R))+i*blk_step, res, MEM_TYPE_DATA);
 						break;
 					case 3:
-						set_dword_mem(cpu, (*op2reg(cpu, REG_R))+i, res, MEM_TYPE_DATA);
+						set_dword_mem(cpu, (*op2reg(cpu, REG_R))+i*blk_step, res, MEM_TYPE_DATA);
 						break;
 					default:
 						exe_err(cpu);
@@ -1126,7 +1528,26 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 			}
 			break;
 		case PUSH_P:
-			push(cpu, cpu->P, instr->op_size);
+			// MPU: 压栈写区间检查
+			if(instr->op_size>=1 && instr->op_size<=3) {
+				uint32_t s_new=*op2reg(cpu, REG_S)+(1u<<(instr->op_size-1));
+				if(mem_check_data(cpu, *op2reg(cpu, REG_S)+1, 1u<<(instr->op_size-1))) {
+					exe_err(cpu);
+					cpu->sys.xar=mpu_stack_xar(cpu, s_new);
+					return 3;		// #STACK
+				}
+			}
+			{
+				int perr=push(cpu, cpu->P, instr->op_size);
+				if(perr) {
+					exe_err(cpu);
+					if(perr==2) {
+						cpu->sys.xar=((uint32_t)(*op2reg(cpu, REG_S))+(1u<<(instr->op_size-1)))&0x7fffffff;
+						return 3;	// #STACK
+					}
+					return 1;		// #II
+				}
+			}
 			break;
 		case NOP:
 			break;
@@ -1152,23 +1573,87 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 				err=1;
 				return err;
 			}
+			uint32_t blkin_step=1<<(instr->op_size-1);	// BYTE=1, WORD=2, DWORD=4
+			// MPU: 批量写入区间 [op1, op1+C*step) 检查（*E → 代码区间）
+			{
+				uint32_t cnt=*op2reg(cpu, REG_C);
+				if(cnt>0) {
+					uint64_t end=(uint64_t)(*op2reg(cpu, instr->op1))+(uint64_t)(cnt-1)*blkin_step+(uint64_t)blkin_step;
+					int mc=(instr->op1==REG_E)
+						? mem_check_code(cpu, *op2reg(cpu, instr->op1), (uint32_t)(end-(*op2reg(cpu, instr->op1))))
+						: mem_check_data(cpu, *op2reg(cpu, instr->op1), (uint32_t)(end-(*op2reg(cpu, instr->op1))));
+					if(mc) {
+						exe_err(cpu);
+						return 4;		// #GP
+					}
+				}
+			}
 			for(uint32_t i=0; i<(*op2reg(cpu, REG_C)); i++) {
 				res=device_read(cpu, (uint16_t)((*op2reg(cpu, REG_A))&0xffff), instr->op_size);
 				switch(instr->op_size) {
 					case 1:
-						set_mem(cpu, (*op2reg(cpu, instr->op1))+i, res, (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+						set_mem(cpu, (*op2reg(cpu, instr->op1))+i*blkin_step, res, (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
 						break;
 					case 2:
-						set_word_mem(cpu, (*op2reg(cpu, instr->op1))+i, res, (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+						set_word_mem(cpu, (*op2reg(cpu, instr->op1))+i*blkin_step, res, (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
 						break;
 					case 3:
-						set_dword_mem(cpu, (*op2reg(cpu, instr->op1))+i, res, (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+						set_dword_mem(cpu, (*op2reg(cpu, instr->op1))+i*blkin_step, res, (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
 						break;
 					default:
 						exe_err(cpu);
 						err=1;
 						return err;
 				}
+			}
+			break;
+		case POR:
+			if(instr->op1==0xe || instr->op1==0xf) {
+				exe_err(cpu);
+				err=1;
+				return err;
+			}
+			if((*op2reg(cpu, REG_S))<(1u<<(instr->op_size-1))) {		// 栈下溢 → #STACK
+				exe_err(cpu);
+				cpu->sys.xar=0x80000000u|(((*op2reg(cpu, REG_S))-(1u<<(instr->op_size-1)))&0x7fffffff);
+				return 3;
+			}
+			// MPU: 弹栈读区间 [S-size+1, S] 检查
+			if(instr->op_size>=1 && instr->op_size<=3) {
+				uint32_t s_new=*op2reg(cpu, REG_S)-(1u<<(instr->op_size-1));
+				if(mem_check_data(cpu, s_new+1, 1u<<(instr->op_size-1))) {
+					exe_err(cpu);
+					cpu->sys.xar=mpu_stack_xar(cpu, s_new);
+					return 3;		// #STACK
+				}
+			}
+			res=pop(cpu, instr->op_size);
+			uint32_t por_addr=(*op2reg(cpu, instr->op1));
+			uint8_t por_type=(instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA);
+			// MPU: 写入目标区间检查（*DPR → 数据区间；*E → 代码区间）
+			if(instr->op_size>=1 && instr->op_size<=3) {
+				int mc=(instr->op1==REG_E)
+					? mem_check_code(cpu, por_addr, 1u<<(instr->op_size-1))
+					: mem_check_data(cpu, por_addr, 1u<<(instr->op_size-1));
+				if(mc) {
+					exe_err(cpu);
+					return 4;		// #GP
+				}
+			}
+			switch(instr->op_size) {
+				case 1:
+					set_mem(cpu, por_addr, (res&0xff), por_type);
+					break;
+				case 2:
+					set_word_mem(cpu, por_addr, res, por_type);
+					break;
+				case 3:
+					set_dword_mem(cpu, por_addr, res, por_type);
+					break;
+				default:
+					exe_err(cpu);
+					err=1;
+					return err;
 			}
 			break;
 		default:

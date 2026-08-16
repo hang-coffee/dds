@@ -36,9 +36,9 @@ $(BUILD_DIR)/bin $(OBJ_DIR):
 clean:
 	rm -rf $(BUILD_DIR)
 
-# 运行（默认加载 tests/bin/test.bin）
+# 运行（默认加载当前目录的 code.bin 与 data.bin）
 run: $(TARGET)
-	./$(TARGET) -f tests/bin/test.bin
+	./$(TARGET)
 
 # 调试模式（带 DEBUG 宏，开启 INFO 日志）
 debug: CFLAGS += -DDEBUG
