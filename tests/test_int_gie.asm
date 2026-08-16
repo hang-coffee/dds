@@ -1,9 +1,9 @@
 ;; ============================================================
-;; test_int_gie.das - 软件中断在 GIE=0 时仍可触发
+;; test_int_gie.asm - 软件中断在 GIE=0 时仍可触发
 ;; 覆盖: INT(0x32) 不受全局中断开关影响（manual: 软中断总是尝试派发）
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_int_gie.das
+;;   sh tests/run_test.sh tests/test_int_gie.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x0A11E6E0 (ISR 执行了一次; 失败则 A=0x00000000)

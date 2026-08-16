@@ -1,5 +1,5 @@
 ;; ============================================================
-;; test_mpu.das - MPU 内存保护测试
+;; test_mpu.asm - MPU 内存保护测试
 ;; 覆盖: LR/ST/LOD/STO/BLKS 越界→#GP, PUSH/POP/SFA 越界→#STACK,
 ;;       LET 写 S→#STACK / 写 E→#GP, JMP 目标越界→#GP, 区间内访问正常
 ;;
@@ -8,7 +8,7 @@
 ;; 标志: 0x3100 gp_count, 0x3104 gp_xar, 0x3108 stack_xar
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_mpu.das
+;;   sh tests/run_test.sh tests/test_mpu.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x00BEEF00 (全部断言通过; 任一失败则 A=0x00000000)

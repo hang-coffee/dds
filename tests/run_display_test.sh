@@ -1,7 +1,7 @@
 #!/bin/sh
 # ============================================================
 # run_display_test.sh - Display 层 + FB 设备端到端测试
-# 汇编 test_fb.das，用 ppm 后端运行模拟器，检查导出的 PPM 图像
+# 汇编 test_fb.asm，用 ppm 后端运行模拟器，检查导出的 PPM 图像
 # 期望: 8x8 帧缓冲, (0,0)=红, (4,4)=绿, (7,7)=蓝, 其余黑
 # 用法: sh tests/run_display_test.sh
 # ============================================================
@@ -23,8 +23,8 @@ check() { # 描述, 实际, 期望
 	fi
 }
 
-echo "== 1. 汇编 test_fb.das =="
-$DASM tests/test_fb.das "$T/code.bin" "$T/data.bin" >/dev/null || { echo "汇编失败"; exit 1; }
+echo "== 1. 汇编 test_fb.asm =="
+$DASM tests/test_fb.asm "$T/code.bin" "$T/data.bin" >/dev/null || { echo "汇编失败"; exit 1; }
 
 echo "== 2. 运行模拟器 (ppm 后端, 8x8) =="
 timeout -s INT 3 ./build/bin/doctor_sim \

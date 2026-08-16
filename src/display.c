@@ -53,11 +53,13 @@ typedef struct {
 static void tty_putc(Display *d, char c, uint8_t attr) {
 	(void)d; (void)attr;
 	fputc(c, stdout);
+	fflush(stdout);		// 实时输出（UART 等串口语义）
 }
 
 static void tty_puts(Display *d, const char *s, uint8_t attr) {
 	(void)d; (void)attr;
 	fputs(s, stdout);
+	fflush(stdout);
 }
 
 static void tty_flush(Display *d) {
@@ -91,6 +93,7 @@ static void ansi_putc(Display *d, char c, uint8_t attr) {
 	} else {
 		fputc(c, stdout);
 	}
+	fflush(stdout);		// 实时输出
 }
 
 static void ansi_puts(Display *d, const char *s, uint8_t attr) {
@@ -102,6 +105,7 @@ static void ansi_puts(Display *d, const char *s, uint8_t attr) {
 	} else {
 		fputs(s, stdout);
 	}
+	fflush(stdout);
 }
 
 // 帧缓冲 → 亮度字符画（限制尺寸防止刷屏）

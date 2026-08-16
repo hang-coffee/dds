@@ -1,9 +1,9 @@
 ;; ============================================================
-;; test_logic.das - 位运算测试
+;; test_logic.asm - 位运算测试
 ;; 覆盖: AND / OR / XOR / NEG / MNE / SHL / SHR / MSL / MSR / NZ
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_logic.das
+;;   sh tests/run_test.sh tests/test_logic.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x00C0FFEE (全部断言通过; 任一失败则 A=0x00000000)

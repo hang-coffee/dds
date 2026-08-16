@@ -68,6 +68,6 @@ static const Device_ops uart_ops={
 #define UART_ST_TX_OVERFLOW 0x0002
 
 #define UART_FIFO_SIZE 16
-#define UART_IRQ 1
+#define UART_IRQ 4		// COM1 标准（键盘占用 IRQ1）
 
 #endif

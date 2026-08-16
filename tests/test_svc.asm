@@ -1,5 +1,5 @@
 ;; ============================================================
-;; test_svc.das - SVC 陷入内核 + 内核态检查测试
+;; test_svc.asm - SVC 陷入内核 + 内核态检查测试
 ;; 覆盖: SVC(0x40) 特权级切换 / 用户态 SETB-GETB 触发 #GP / 异常在内核态执行
 ;;
 ;; 流程:
@@ -13,7 +13,7 @@
 ;;   0x3120 svc_flag, 0x3124 gp_xar, 0x3128 gp_kflag
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_svc.das
+;;   sh tests/run_test.sh tests/test_svc.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x005C5C5E (全部断言通过; 任一失败则 A=0x00000000)

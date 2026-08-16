@@ -8,7 +8,7 @@ echo "== 1. 编译模拟器 =="
 make
 
 echo "== 2. 用 dasm 汇编测试程序 =="
-(cd tools/dasm && ./dasm ../tests/irq_test.das ../tests/bin/irq_test_code.bin ../tests/bin/irq_test_data.bin | tail -1)
+(cd tools/dasm && ./dasm ../tests/irq_test.asm ../tests/bin/irq_test_code.bin ../tests/bin/irq_test_data.bin | tail -1)
 
 echo "== 3. 运行模拟器 (SIGINT超时3秒后转储寄存器) =="
 timeout -s INT 3 ./build/bin/doctor_sim \

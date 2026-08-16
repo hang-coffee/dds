@@ -1,15 +1,15 @@
 #!/bin/sh
-# 汇编并运行单个 .das 测试, 自动检查通过标记
-# 用法: sh tests/run_test.sh tests/test_arith.das
+# 汇编并运行单个 .asm 测试, 自动检查通过标记
+# 用法: sh tests/run_test.sh tests/test_arith.asm
 set -e
 cd "$(dirname "$0")/.."
 
 DAS="$1"
 if [ -z "$DAS" ]; then
-	echo "用法: sh tests/run_test.sh <test.das>"
+	echo "用法: sh tests/run_test.sh <test.asm>"
 	exit 1
 fi
-BASE=$(basename "$DAS" .das)
+BASE=$(basename "$DAS" .asm)
 CODE="/tmp/${BASE}_code.bin"
 DATA="/tmp/${BASE}_data.bin"
 OUT="/tmp/${BASE}_out.txt"

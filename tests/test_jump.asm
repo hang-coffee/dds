@@ -1,12 +1,12 @@
 ;; ============================================================
-;; test_jump.das - 条件跳转测试
+;; test_jump.asm - 条件跳转测试
 ;; 覆盖: TEST / CMP / JZ / JNZ / JRZ / JRNZ / JA / JNA / JB / JNB
 ;;       / JG / JNG / JL / JNL (无符号与有符号)
 ;;
 ;; 注意: 所有条件跳转的目标都取自 E 寄存器, 跳转前必须 LET E。
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_jump.das
+;;   sh tests/run_test.sh tests/test_jump.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x00005E5E (全部跳转点通过; 任一失败则 A=0x00000000)

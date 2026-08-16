@@ -1,4 +1,4 @@
-;; irq_test.das - PIT→IRQ0→ISR→IRET 端到端测试 (由dasm汇编)
+;; irq_test.asm - PIT→IRQ0→ISR→IRET 端到端测试 (由dasm汇编)
 ;;
 ;; 流程:
 ;;   1. 在数据区 0x1080 写入 ICT 第 0x10 项 (ISR_BASE=0x100, byte4=0x10 即 ISR_NMO=1)

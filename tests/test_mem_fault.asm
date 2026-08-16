@@ -1,5 +1,5 @@
 ;; ============================================================
-;; test_mem_fault.das - 数据内存物理边界检查测试 (MPU=0)
+;; test_mem_fault.asm - 数据内存物理边界检查测试 (MPU=0)
 ;; 覆盖: LR/ST/LOD/STO 越界→#GP, SFA 物理上溢→#STACK, LET E 越界→#GP,
 ;;       边界内访问正常
 ;;
@@ -8,7 +8,7 @@
 ;; 标志: 0x3100 gp_count, 0x3104 gp_xar, 0x3108 stack_xar
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_mem_fault.das
+;;   sh tests/run_test.sh tests/test_mem_fault.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x00FA17A1 (全部断言通过; 任一失败则 A=0x00000000)

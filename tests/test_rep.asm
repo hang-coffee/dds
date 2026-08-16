@@ -1,9 +1,9 @@
 ;; ============================================================
-;; test_rep.das - REP 前缀测试
+;; test_rep.asm - REP 前缀测试
 ;; 覆盖: REP XCHG（新语义: 以 C 为计数器重复执行 while(C!=0){执行; C--;}）
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_rep.das
+;;   sh tests/run_test.sh tests/test_rep.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x0000E2E2 (全部断言通过; 任一失败则 A=0x00000000)

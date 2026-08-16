@@ -1,9 +1,9 @@
 ;; ============================================================
-;; test_nz_neg_mne.das - NEG/MNE 的 NZ 变体测试
+;; test_nz_neg_mne.asm - NEG/MNE 的 NZ 变体测试
 ;; 覆盖: MNE NZ BYTE / MNE NZ WORD / MNENZ 拼接 / NEG NZ BYTE / NEGNZ WORD
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_nz_neg_mne.das
+;;   sh tests/run_test.sh tests/test_nz_neg_mne.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x1E5E0F0F (全部断言通过; 任一失败则 A=0x00000000)

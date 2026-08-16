@@ -1,5 +1,5 @@
 ;; ============================================================
-;; test_stack.das - 栈与函数调用测试
+;; test_stack.asm - 栈与函数调用测试
 ;; 覆盖: SFA / RER / PUSHR / POPR / PUSH DWORD E (返回地址) / JMP
 ;;
 ;; 函数调用约定(演示):
@@ -7,7 +7,7 @@
 ;;   函数:    SFA DWORD <局部大小>; ...函数体...; RER; JMP
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_stack.das
+;;   sh tests/run_test.sh tests/test_stack.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x0000FAC7 (全部断言通过; 任一失败则 A=0x00000000)

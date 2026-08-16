@@ -1,10 +1,10 @@
 ;; ============================================================
-;; test_dasm_features.das - dasm 新语法端到端测试
+;; test_dasm_features.asm - dasm 新语法端到端测试
 ;; 覆盖: *reg+N 指针偏移 / PUSH P / pushp / NZ 拼接(ADDNZ) / 表达式
 ;;       (同时验证模拟器解码器对 LR/ST 偏移立即数的支持)
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_dasm_features.das
+;;   sh tests/run_test.sh tests/test_dasm_features.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x00D5FE5E (全部断言通过; 任一失败则 A=0x00000000)

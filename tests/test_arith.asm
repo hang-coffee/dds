@@ -1,9 +1,9 @@
 ;; ============================================================
-;; test_arith.das - 四则运算测试
+;; test_arith.asm - 四则运算测试
 ;; 覆盖: LET / ADD / SUB / MUL / DIV / DIV QWORD / CSI / CDI / NZ
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_arith.das
+;;   sh tests/run_test.sh tests/test_arith.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   D1 = 0x00000002   (100/7 的余数)

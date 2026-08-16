@@ -10,6 +10,7 @@
 #include "decode.h"
 #include "device.h"
 #include "display.h"
+#include "input.h"
 
 #define PROGRAM_NAME      "doctor-emu"
 #define DOCTOR_EMU_VERSION "0.1.0"
@@ -184,6 +185,9 @@ int main(int argc, char *argv[]) {
 	             DISPLAY_FG_GREEN);
 	display_puts(display_get_global(), display_backend_name(dsp_backend), DISPLAY_FG_CYAN|DISPLAY_ATTR_BOLD);
 	display_puts(display_get_global(), "\n", 0);
+
+	// ---- 宿主键盘输入 → KBC（安全键 Ctrl+C / q）----
+	input_init();
 
 	cpu_init(&cpu);
 	if(dump_devices) device_dump_all(&cpu);

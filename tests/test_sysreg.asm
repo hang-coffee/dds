@@ -1,10 +1,10 @@
 ;; ============================================================
-;; test_sysreg.das - 系统寄存器 SETB/GETB 往返测试
+;; test_sysreg.asm - 系统寄存器 SETB/GETB 往返测试
 ;; 覆盖: CBASE / CLIMIT / DBASE / DLIMIT / KSP / XAR / ICTB
 ;;       / RIN3_CTRL 的写入与读回一致性
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_sysreg.das
+;;   sh tests/run_test.sh tests/test_sysreg.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x00005A5A (全部8个系统寄存器往返一致; 任一失败则 A=0x00000000)

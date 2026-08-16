@@ -1,5 +1,5 @@
 ;; ============================================================
-;; test_interrupt.das - 周期模式 PIT 多次中断测试
+;; test_interrupt.asm - 周期模式 PIT 多次中断测试
 ;; 覆盖: ICT 配置 / SETB ICTB / SETB RIN3_CTRL / 周期PIT(SE=0)
 ;;       / IRQ0 派发 / ISR / IRET / 在ISR中关闭PIT
 ;;
@@ -11,7 +11,7 @@
 ;;   5. 计数达到 3 后, ISR 关闭 PIT, 主程序不再被唤醒
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_interrupt.das
+;;   sh tests/run_test.sh tests/test_interrupt.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x00001E1E (主流程到达通过标记)

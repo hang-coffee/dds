@@ -1,5 +1,5 @@
 ;; ============================================================
-;; test_exception.das - 异常体系端到端测试
+;; test_exception.asm - 异常体系端到端测试
 ;; 覆盖: #DIV(0x00) / #II(0x01) / #STACK(0x02, 上溢+下溢) / #GP(0x03, 特权+跳转)
 ;;       异常自动压栈 RIN3/P/中断号、强制切KSP、XAR 写入、IRET 恢复
 ;;
@@ -9,7 +9,7 @@
 ;;   标志区: 0x3100 flag_div, 0x3104 stack_xar, 0x3108 flag_ii, 0x310C gp_xar
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_exception.das
+;;   sh tests/run_test.sh tests/test_exception.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x00E3C3E3 (全部断言通过; 任一失败则 A=0x00000000)

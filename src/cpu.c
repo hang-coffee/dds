@@ -5,14 +5,18 @@
 #include "decode.h"
 #include "execution.h"
 #include "interrupt.h"
+#include "input.h"
+#include <unistd.h>
 
 #include "devices/pit.h"
 #include "devices/fb.h"
 #include "devices/uart.h"
+#include "devices/kbc.h"
 
 Device dev_pit;
 Device dev_fb;
 Device dev_uart;
+Device dev_kbc;
 
 void cpu_init(DOCTOR_CPU *cpu) {
 	cpu->code_mem=(uint8_t *)calloc(CODE_SIZE, 1);
@@ -53,6 +57,8 @@ void cpu_init(DOCTOR_CPU *cpu) {
 	device_register(cpu, &dev_fb);
 	uart_init(&dev_uart);
 	device_register(cpu, &dev_uart);
+	kbc_init(&dev_kbc);
+	device_register(cpu, &dev_kbc);
 
 	return;
 }
@@ -88,6 +94,13 @@ void cpu_run(DOCTOR_CPU *cpu) {
 	uint64_t step_cnt=0;
 	int exc_streak=0;		// 连续异常计数（防止异常风暴/递归）
 	while(!sigint_received) {
+		// 宿主键盘输入 → KBC 设备（含安全键处理）
+		input_poll(cpu);
+		// 暂停：冻结模拟（Ctrl+C 暂停/恢复，见 input.c）
+		if(sim_paused) {
+			usleep(1000);
+			continue;
+		}
 		// 未停机：取指、解码、执行一条指令
 		if(!cpu->halted) {
 			if(cpu->P>=CODE_SIZE) {

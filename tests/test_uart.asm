@@ -1,12 +1,12 @@
 ;; ============================================================
-;; test_uart.das - UART 设备端到端测试
-;; 覆盖: 环回收发 / TX 状态与溢出 / RX 溢出 / 接收中断(IRQ1→ISR)
+;; test_uart.asm - UART 设备端到端测试
+;; 覆盖: 环回收发 / TX 状态与溢出 / RX 溢出 / 接收中断(IRQ4→ISR)
 ;;
-;; ICT: 0x11 (ISRB=0x10, IRQ1) @ 0x1088 = ISR_UART; KSP 不需要(SS=0)
+;; ICT: 0x14 (ISRB=0x10, IRQ4=COM1) @ 0x10A0 = ISR_UART; KSP 不需要(SS=0)
 ;; 标志: 0x3100 isr_flag
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_uart.das
+;;   sh tests/run_test.sh tests/test_uart.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x0A115E5E (全部断言通过; 任一失败则 A=0x00000000)
@@ -16,8 +16,8 @@
 	ORG 0
 
 START:
-	;; ---- ICT[0x11] @ 0x1088 = ISR_UART ----
-	LET R, DWORD 0x1088
+	;; ---- ICT[0x14] @ 0x10A0 = ISR_UART ----
+	LET R, DWORD 0x10A0
 	LET A, DWORD ISR_UART
 	STO DWORD A
 	LET A, DWORD 0
@@ -25,7 +25,7 @@ START:
 	LET R, DWORD 0x1000
 	SETB ICTB, R
 	LET S, DWORD 0x3000
-	;; GIE=1, ISRB=0x10 (IRQ1 → 中断号 0x11)
+	;; GIE=1, ISRB=0x10 (IRQ4 → 中断号 0x14)
 	LET D1, DWORD 0x80100000
 	SETB RIN3_CTRL, D1
 
@@ -144,12 +144,12 @@ T6B:
 	ZERO A
 	HLT
 
-	;; ===== 4. 接收中断: 环回 'Z' → IRQ1 → ISR =====
+	;; ===== 4. 接收中断: 环回 'Z' → IRQ4 → ISR =====
 T7:
 	LET A, DWORD 0x07			; EN|IE|LOOP
 	OUT DWORD 0x18, A
 	LET A, BYTE 0x5A			; 'Z'
-	OUT BYTE 0x16, A			; → FIFO + irq_set(IRQ1)
+	OUT BYTE 0x16, A			; → FIFO + irq_set(IRQ4)
 	;; 忙等 isr_flag == 1（中断在指令边界自动派发，ISR 读回 'Z' 并置标志）
 UART_WAIT:
 	LET R, DWORD 0x3100

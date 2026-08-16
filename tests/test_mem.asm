@@ -1,9 +1,9 @@
 ;; ============================================================
-;; test_mem.das - 内存访问测试
+;; test_mem.asm - 内存访问测试
 ;; 覆盖: SR / ST / LR / LOD / STO / BLKS / PUSH / POP / POR
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_mem.das
+;;   sh tests/run_test.sh tests/test_mem.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x0000E4E4 (全部断言通过; 任一失败则 A=0x00000000)

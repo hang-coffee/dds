@@ -1,9 +1,9 @@
 ;; ============================================================
-;; test_io.das - 端口 I/O 测试
+;; test_io.asm - 端口 I/O 测试
 ;; 覆盖: OUT / IN / BLKIN (使用 PIT 端口 0x10/0x11)
 ;;
 ;; 运行:
-;;   sh tests/run_test.sh tests/test_io.das
+;;   sh tests/run_test.sh tests/test_io.asm
 ;;
 ;; 期望(寄存器转储):
 ;;   A  = 0x0000010C (全部断言通过; 任一失败则 A=0x00000000)
