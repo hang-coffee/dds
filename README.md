@@ -5,8 +5,9 @@
 - [x] 接入异常体系（#DIV/#II/#STACK/#GP/#NMI 触发与派发、XAR、SVC 特权级切换）
 - [x] 实现全部 69 条指令（0x00–0x44，含 SVC 与 MNE/NEG 的 NZ 变体）
 - [x] 完善 Display 层（后端抽象：tty/ansi/ppm/fb，FB 设备已接入）
-- [x] 添加 UART 设备（环回/状态/溢出/接收中断 IRQ1，输出走 Display 层）
-- [ ] 完善 `manual.md`、增加 KBC、RTC、DISK 设备
+- [x] 添加 UART 设备（环回/状态/溢出/接收中断 IRQ4=COM1，输出走 Display 层）
+- [x] 添加 AT 兼容键盘 KBC（Set 1 扫描码、8042 命令/状态、电平式中断 IRQ1）
+- [ ] 完善 `manual.md`、增加 RTC、DISK 设备
 - [ ] dasm 反汇编器（B1.8，见下文「已知问题与限制 - 汇编器」）
 
 ## 编译方法
@@ -36,33 +37,47 @@ make
 ./build/bin/doctor_sim --display ppm --display-file out.ppm --display-size 320x200 ...
                                              # 帧缓冲导出 PPM 图像
 ./build/bin/doctor_sim --display fb ...      # 帧缓冲保留内存（程序化消费）
+
+# 宿主键盘输入（stdin 为终端时自动启用，转发为 KBC 的 Set 1 扫描码）
+#   安全键: 第一次 Ctrl+C 暂停模拟（输入不再转发）；再次 Ctrl+C 恢复；
+#           暂停时按 d 显示当前寄存器转储；按 q 退出
+./build/bin/doctor_sim -f code demo_code.bin data demo_data.bin
 ```
 
 ## DOCTOR 汇编器 (dasm)
 汇编器位于 `tools/dasm/`，用法：
 ```bash
 cd tools/dasm && make
-./dasm <input.das> [code.bin] [data.bin]
+./dasm <input.asm> [code.bin] [data.bin]
 ```
 
-测试程序位于 `tests/`，每个 `.das` 文件头部注释写明期望结果（通过标记为转储中
+测试程序位于 `tests/`，每个 `.asm` 文件头部注释写明期望结果（通过标记为转储中
 `A` 寄存器的特定 magic 值），一键运行：
 ```bash
-sh tests/run_test.sh tests/test_arith.das     # 运行单个测试（自动断言 PASS/FAIL）
+sh tests/run_test.sh tests/test_arith.asm     # 运行单个测试（自动断言 PASS/FAIL）
 sh tests/run_irq_test.sh                      # PIT→IRQ0→ISR→IRET 端到端测试
 sh tests/run_dasm_test.sh                     # dasm 语法修复的字节级测试（22项）
 sh tests/run_display_test.sh                  # Display 层 + FB 设备（PPM 导出断言）
+
+演示程序（交互式，非自动化测试）:
+```bash
+./tools/dasm/dasm tests/demo_echo.asm demo_code.bin demo_data.bin
+./build/bin/doctor_sim -f code demo_code.bin data demo_data.bin
+# 终端打字 → 每个按键经 KBC 中断直接回显字符本身（Set 1 扫描码翻译，
+#   支持 Shift 大小写/上档、Enter 换行、Backspace 退格、Tab 制表）
+# Ctrl+C 暂停/恢复；暂停时 d 寄存器转储；q 退出
 ```
-另：`tests/test_dasm_features.das` 端到端覆盖 dasm 新语法
+另：`tests/test_dasm_features.asm` 端到端覆盖 dasm 新语法
 （`*reg+N` 偏移 / `PUSH P` / `pushp` / NZ 拼接 / 表达式）与解码器偏移支持；
-`tests/test_exception.das` 覆盖异常体系（#DIV/#II/#STACK/#GP 六种触发 + XAR 验证）；
-`tests/test_svc.das` 覆盖 SVC 特权级切换与内核态检查；
-`tests/test_nz_neg_mne.das` 覆盖 NEG/MNE 的 NZ 变体；
-`tests/test_mpu.das` 覆盖 MPU 护栏（数据/代码区间越界 → #GP/#STACK）；
-`tests/test_int_gie.das` 覆盖软中断在 GIE=0 时仍可触发；
-`tests/test_fb.das` 覆盖 FB 帧缓冲设备与 Display 层（配合 `run_display_test.sh`）；
-`tests/test_uart.das` 覆盖 UART 环回/状态/溢出/接收中断（IRQ1→ISR）；
-`tests/test_mem_fault.das` 覆盖数据内存物理边界（越界 → #GP/#STACK）。
+`tests/test_exception.asm` 覆盖异常体系（#DIV/#II/#STACK/#GP 六种触发 + XAR 验证）；
+`tests/test_svc.asm` 覆盖 SVC 特权级切换与内核态检查；
+`tests/test_nz_neg_mne.asm` 覆盖 NEG/MNE 的 NZ 变体；
+`tests/test_mpu.asm` 覆盖 MPU 护栏（数据/代码区间越界 → #GP/#STACK）；
+`tests/test_int_gie.asm` 覆盖软中断在 GIE=0 时仍可触发；
+`tests/test_fb.asm` 覆盖 FB 帧缓冲设备与 Display 层（配合 `run_display_test.sh`）；
+`tests/test_uart.asm` 覆盖 UART 环回/状态/溢出/接收中断（IRQ4→ISR）；
+`tests/test_kbc.asm` 覆盖 KBC 自测/命令字节/键盘命令/OBF/中断（IRQ1→ISR）；
+`tests/test_mem_fault.asm` 覆盖数据内存物理边界（越界 → #GP/#STACK）。
 
 ## 已知问题与限制
 
@@ -88,7 +103,7 @@ sh tests/run_display_test.sh                  # Display 层 + FB 设备（PPM �
 - **软中断不受全局中断开关影响**（manual 已同步）：`INT` 在 GIE=0 或 PUSHI/POPI 内部
   也总是尝试派发（不 #GP）；仅嵌套规则拒绝或越权（DPL）时触发 #GP。
 - **嵌套中断**：INL/IPL 抢占规则已修正；异常/NMI 的不可屏蔽路径已有测试覆盖
-  （test_exception.das 连续 6 种异常）。
+  （test_exception.asm 连续 6 种异常）。
 - ~~IRET 每次执行调用 `exe_err()`~~ **已移除**（调试噪音）。
 
 #### A3. MPU 内存保护（已实现）
@@ -103,15 +118,15 @@ sh tests/run_display_test.sh                  # Display 层 + FB 设备（PPM �
   - `JMP` 等跳转目标 E → `[CBASE, CLIMIT)`
 - #STACK 的 XAR 编码与异常体系一致（bit31: 0=上溢/1=下溢；低31位=S 新值）。
 - 实现注：MPU 开启时 `LET`/`MOV` 无法写入越界 E/S/F（写入即被拒），因此跳转目标越界
-  只能通过先关 MPU 注入、再开启后 JMP 触发（见 test_mpu.das 第 9 段）。
+  只能通过先关 MPU 注入、再开启后 JMP 触发（见 test_mpu.asm 第 9 段）。
 
 #### A4. 设备层
 - `device_tick_all()` 每指令调用一次（`cycles=1`），**无真实周期计数**，设备 tick 粒度粗。
 - ~~`device_destroy_all` 从未调用 / 设备私有数据泄漏~~ **已修复**：`cpu_free()` 调用
   `device_destroy_all` 释放 PIT/FB/UART 私有数据（ASan detect_leaks 验证无泄漏）；
   `device_dump_all` 由 `--dump-devices` 参数触发；`device_reset_all` 仍为预留接口。
-- 已实现 **PIT**、**FB**（帧缓冲）与 **UART**（见 `dev_specification.md`）；
-  `KBC`/`RTC`/`DISK` 只存在于 `Device_type` 枚举。
+- 已实现 **PIT**、**FB**（帧缓冲）、**UART** 与 **KBC**（AT 兼容键盘，见 `dev_specification.md`）；
+  `RTC`/`DISK` 只存在于 `Device_type` 枚举。
 - **MMIO 未接入**：`device.h` 有 `is_mmio`/`base_mem` 字段，但内存访问路径
   （`mem.h` 的 load/store）没有设备映射逻辑。
 - PIT 细节：真实时间模式（μs/ms/s，TU=00/01/10）用墙钟驱动，与模拟执行速度无关，
@@ -136,6 +151,12 @@ sh tests/run_display_test.sh                  # Display 层 + FB 设备（PPM �
 - **NZ 高位保留语义统一修复**：`ADD`/`SUB`/`LET`/`MOV`/`POP` 的 NZ 变体此前会清零高位
   （ADD NZ 只留低字节）或存在进位污染高位（LET/MOV/POP 用 `+=`）；已统一为
   「高位保留、低 N 位替换/运算」并与 AND/OR/XOR/IN 的 NZ 行为一致。
+- **有符号条件跳转比较修复**：`JG`/`JNG`/`JL`/`JNL` 的比较表达式
+  `(int32_t)C & mask` 中 `& mask` 会把结果提升为无符号，导致「C 为负、reg 为 0」
+  时（如 C=0xFFFFFFF6 与 X=0 比较，即 -10 < 0）被错误判为 false；已改为
+  `(int32_t)(C & mask) < (int32_t)res`（先截断、再按 int32 解释）。
+  修复前 `-10 < 0` 不成立（被 dcc 生成的 `i < n` 循环暴露）；修复后
+  `tests/test_jump.asm` 与 dcc 端到端测试全部通过。
 
 #### A6. 构建 / 杂项
 - Makefile `debug` 目标添加的 `-DDEBUG` 宏在代码中未使用（`#ifdef DEBUG` 不存在）。
@@ -194,7 +215,7 @@ sh tests/run_display_test.sh                  # Display 层 + FB 设备（PPM �
 - **`LR`/`ST` 的 `*reg+N` 解码缺失**：操作数编码不是 0xF 时 decoder 认为无立即数而返回 #II
   （已按长度字段读取偏移立即数，并按尺寸符号扩展）。
 - **`mem.h pop()` case 3 缺少 `break`**（落空到 default，功能侥幸正确，已补）。
-- **`test_logic.das` 的 `MNE A` 缺尺寸**（manual 规定 MNE 需要尺寸，已改为 `MNE DWORD A`）。
+- **`test_logic.asm` 的 `MNE A` 缺尺寸**（manual 规定 MNE 需要尺寸，已改为 `MNE DWORD A`）。
 - **SVC 压栈顺序错误**：先清 GIE/CPL 再派发导致压入的是已清除的 RIN3，IRET 无法恢复
   用户态原状（已改为先派发压入原始 RIN3，再置内核工作状态）。
 - **栈操作边界与字节数不一致**：`push`/`pop` 的越界预检用尺寸码(1/2/3)而非实际字节数

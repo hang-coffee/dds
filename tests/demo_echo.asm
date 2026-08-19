@@ -42,7 +42,7 @@ MAP_SHIFT:
 	DB 0x2110, "QWERTYUIOP"		; 大写字母
 	DB 0x211A, "{}"
 	DB 0x211E, "ASDFGHJKL"
-	DB 0x2127, ":\""
+	DB 0x2127, ":\""			; "
 	DB 0x2129, "~"
 	DB 0x212B, "|"
 	DB 0x212C, "ZXCVBNM"

@@ -5,6 +5,7 @@
 //                  使 Ctrl+C 等作为字符到达而非信号；注册 atexit 恢复终端。
 //   input_poll():  cpu_run 每轮调用，非阻塞读取 stdin 并处理:
 //                    0x03 (Ctrl+C)  安全键: 切换暂停状态
+//                    暂停时 'd'      显示寄存器转储（exe_err）
 //                    暂停时 'q'      退出模拟器
 //                    暂停时其它键    不转发
 //                    普通键          ASCII → Set 1 make 码 → kbc_inject_scancode
@@ -14,6 +15,7 @@
 
 #include "input.h"
 #include "devices/kbc.h"
+#include "debugger.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -40,7 +42,7 @@ void input_init(void) {
 	if(tcsetattr(STDIN_FILENO, TCSANOW, &raw)!=0) return;
 	tty_active=true;
 	atexit(input_restore);
-	fprintf(stderr, "[KBD] 键盘输入已连接 (Ctrl+C 暂停/恢复, 暂停时 q 退出)\n");
+	fprintf(stderr, "[KBD] 键盘输入已连接 (Ctrl+C 暂停/恢复, 暂停时 d 寄存器转储, q 退出)\n");
 	return;
 }
 
@@ -152,6 +154,12 @@ static void handle_key(DOCTOR_CPU *cpu, uint8_t ch) {
 			fprintf(stderr, "\n[KBD] 退出\n");
 			input_restore();
 			exit(0);
+		}
+		if(ch=='d' || ch=='D') {		// 暂停时 d：显示寄存器转储
+			fprintf(stderr, "\n[KBD] 寄存器转储:\n");
+			exe_err(cpu);
+			fprintf(stderr, "\n");
+			return;
 		}
 		return;							// 暂停期间其它键不转发
 	}

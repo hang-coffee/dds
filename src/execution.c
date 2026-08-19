@@ -1168,7 +1168,9 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					return err;
 			}
 //			fprintf(stderr, "res=%u, instr->op1=%d, C=%u\n", res&mask, instr->op1, (*op2reg(cpu, REG_C)&mask));
-			if(((int32_t)(*op2reg(cpu, REG_C))&mask)>(res&mask)) {
+			// 有符号比较：C 与 reg 先按 mask 截断，再以 int32 解释（JG: C > reg）
+			// （注意：不能写成 (int32_t)(C)&mask，位与会重新提升为无符号）
+			if(((int32_t)((*op2reg(cpu, REG_C))&mask))>((int32_t)res)) {
 				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
@@ -1197,7 +1199,8 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					err=1;
 					return err;
 			}
-			if(((int32_t)(*op2reg(cpu, REG_C))&mask)<=(res&mask)) {
+			// 有符号比较：JNG: C <= reg
+			if(((int32_t)((*op2reg(cpu, REG_C))&mask))<=((int32_t)res)) {
 				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
@@ -1226,7 +1229,8 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					err=1;
 					return err;
 			}
-			if(((int32_t)(*op2reg(cpu, REG_C))&mask)<(res&mask)) {
+			// 有符号比较：JL: C < reg
+			if(((int32_t)((*op2reg(cpu, REG_C))&mask))<((int32_t)res)) {
 				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
@@ -1255,7 +1259,8 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					err=1;
 					return err;
 			}
-			if(((int32_t)(*op2reg(cpu, REG_C))&mask)>=(res&mask)) {
+			// 有符号比较：JNL: C >= reg
+			if(((int32_t)((*op2reg(cpu, REG_C))&mask))>=((int32_t)res)) {
 				{ int jr=jmp(cpu); if(jr){ exe_err(cpu); return jr; } }
 			}
 			break;
