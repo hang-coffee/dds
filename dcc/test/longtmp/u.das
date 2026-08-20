@@ -1,0 +1,14 @@
+; 无符号比较: C=A-B 后 JB DWORD T (T=0)
+LET A, DWORD 100
+MOV C, A
+LET B, DWORD 200
+CMP DWORD B        ; C = 100-200 = 0xFFFFFF9C
+ZERO T
+LET E, DWORD lbl_hit
+JB DWORD T
+LET A, DWORD 0xEE
+LET E, DWORD lbl_end
+JMP
+lbl_hit:
+LET A, DWORD 0x11
+lbl_end:

@@ -169,7 +169,8 @@ ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定�
 
 ## 指令集参考
 
-操作码从 **0x00** 到 **0x44** 连续排列，共 **69** 条指令。  
+基础指令操作码从 **0x00** 到 **0x44** 连续排列，共 **69** 条；
+加上 DFE（0x45–0x54）与 DDE（0x55–0x66），当前 ISA 共 **103** 条指令。  
 
 操作数约定：  
 
@@ -286,8 +287,8 @@ POPI
 | 48 | `IN` *需要尺寸* | `IN [BYTE/WORD/DWORD] [DPR1/DR1], [DPR2/DR2]` | 从端口 `DPR2/DR2` 读入到 `DPR1/DR1` | `0x30` |
 | 49 | `OUT` *需要尺寸* | `OUT [BYTE/WORD/DWORD] [DPR1/DR1], [DPR2/DR2] ` | 将 `DPR2/DR2` 的低N位写入端口 `DPR1/DR1` | `0x31` |
 | 50 | `INT` | `INT [N/DR]` | 触发软件中断 N（这里N必须是一个BYTE），自动压栈RIN3和P，查表跳转 | `0x32` |
-| 51 | `PUSH RIN1` | `PUSH RIN1` | 压入 RIN1 (BYTE) | `0x33` |
-| 52 | `PUSH RIN2` | `PUSH RIN2` | 压入 RIN2 (BYTE) | `0x34` |
+| 51 | `PUSH RIN1` | `PUSH RIN1` | 压入 RIN1 (DWORD) | `0x33` |
+| 52 | `PUSH RIN2` | `PUSH RIN2` | 压入 RIN2 (DWORD) | `0x34` |
 | 53 | `POP RIN1` | `POP RIN1` | 弹出到 RIN1 | `0x35` |
 | 54 | `POP RIN2` | `POP RIN2` | 弹出到 RIN2 | `0x36` |
 | 55 | `PUSHI` | `PUSHI` | (PUSH RIN3 and disable Interrupts) 先压RIN3高32位，再压RIN3低32位，并屏蔽中断 | `0x37` |
@@ -302,7 +303,7 @@ POPI
 | 59 | `PUSH P` *需要尺寸* | `PUSH [BYTE/WORD/DWORD] P` | 将P寄存器的低BYTE/WORD/DWORD压栈 | `0x3B` |
 | 60 | `NOP` | `NOP` | 空指令 | `0x3C` |
 | 61 | `INC` | `INC [DPR/DR/E]` | 简单自增 | `0x3D` |
-| 62 | `DEC` | `DEC [DPR/DR/E]` | 简单自减 | `0X3E` |
+| 62 | `DEC` | `DEC [DPR/DR/E]` | 简单自减 | `0x3E` |
 | 63 | `BLKIN` *需要尺寸* | `BLKIN [BYTE/WORD/DWORD] [DPR/E]` | 读取A号端口，连续(DWORD)C次，写入DPR/E所指向的内存 | `0x3F` |
 
 ### 内存保护指令 (0x40-0x43)
@@ -318,7 +319,8 @@ POPI
 | 0x5 | RIN3_CTRL(RIN3的低32位（系统控制寄存器）) | / |
 | 0x6 | XAR | 异常信息 |
 | 0x7 | ICTB | RIN3的高32位，中断控制表(ICT)的代码基址 |
-| 0x8-0xF | 保留 | / |
+| 0x8 | FPCR | DFE 浮点控制/状态寄存器（见 DOCTOR 浮点扩展） |
+| 0x9-0xF | 保留 | / |
 
 **对于下述指令，MPU会检查内存读写是否越界（MPU=1 时生效，越界触发 #GP；栈操作越界触发 #STACK）：**
 | 指令 | 操作码 | 何时检查 | 检查对象 |
@@ -355,6 +357,165 @@ POPI
 | # | 指令 | 格式 | 语义 | 操作码 |
 |---|---|---|---|---|
 | 68 | `POR` *需要尺寸* | `POR [BYTE/WORD/DWORD] [*DPR/*E]` | (POP to RAM) 将栈顶数据弹出到*DPR或*E所指定的内存空间中 | `0x44` |
+
+## DOCTOR 浮点扩展（DFE）
+
+DOCTOR 浮点扩展（DOCTOR Float Extension，DFE）提供 32 位单精度浮点运算能力，
+当前已在模拟器、dasm、dcc 中实现。
+
+### DFE 寄存器
+
+DFE 新增以下寄存器：
+
+| 寄存器 | 宽度 | 说明 |
+|---|---|---|
+| `FP0` – `FP7` | 32 位 | 8 个单精度浮点数据寄存器 |
+| `FPCR` | 32 位 | 浮点控制/状态寄存器 |
+
+`FP0` – `FP7` 保存 IEEE 754 单精度浮点位模式。  
+`FPCR` 各位定义如下：
+
+| 位 | 名称 | 含义 |
+|---|---|---|
+| 0 | `NX` | 结果不精确（Inexact） |
+| 1 | `UF` | 下溢（Underflow） |
+| 2 | `OF` | 上溢（Overflow） |
+| 3 | `DZ` | 除零（Divide-by-Zero） |
+| 4 | `INV` | 非法操作（Invalid） |
+| 5 | `FIE` | 浮点异常中断使能：1=浮点异常时请求浮点中断 |
+| 7-6 | `RM` | 舍入模式：`00`=就近舍入，`01`=向零截断，`10`=向下舍入，`11`=向上舍入 |
+| 31-8 | Rsvd | 保留，读为 0 |
+
+浮点异常标志为**粘着位**：发生异常时置 1，软件写 0 清除。  
+若 `FIE=1` 且发生浮点异常，DFE 会产生一个浮点异常中断（具体中断号由实现/系统配置决定，预留为 `IRQ6`）。
+
+### DFE 指令
+
+以下指令均使用 `FP0` – `FP7` 作为浮点操作数。  
+除 `FLD`/`FST` 外，DFE 指令**不区分 BYTE/WORD/DWORD**；浮点寄存器与浮点内存访问固定为 32 位。
+
+| 指令 | 格式 | 语义 |
+|---|---|---|
+| `FMOV` | `FMOV FPn, FPm` | `FPn = FPm` |
+| `FLDI` | `FLDI FPn, imm32` | 将 32 位立即数作为浮点位模式载入 `FPn` |
+| `FLD` | `FLD FPn, *DPR/*E` | 从内存读取 32 位浮点值到 `FPn` |
+| `FST` | `FST *DPR/*E, FPn` | 将 `FPn` 的 32 位浮点值写入内存 |
+| `FADD` | `FADD FPn, FPm` | `FPn = FPn + FPm` |
+| `FSUB` | `FSUB FPn, FPm` | `FPn = FPn - FPm` |
+| `FMUL` | `FMUL FPn, FPm` | `FPn = FPn * FPm` |
+| `FDIV` | `FDIV FPn, FPm` | `FPn = FPn / FPm` |
+| `FSQRT` | `FSQRT FPn` | `FPn = sqrt(FPn)` |
+| `FNEG` | `FNEG FPn` | `FPn = -FPn` |
+| `FABS` | `FABS FPn` | `FPn = |FPn|` |
+| `FCMP` | `FCMP FPn, FPm` | 比较 `FPn` 与 `FPm`，结果写入 `C`：`FPn < FPm` → `C = -1`，`FPn == FPm` → `C = 0`，`FPn > FPm` → `C = 1`；若为无序（NaN）则置 `FPCR.INV` |
+| `F2I` | `F2I DR, FPn` | 将 `FPn` 按当前舍入模式转换为 32 位整数，写入 `DR` |
+| `I2F` | `I2F FPn, DR` | 将 `DR` 中的 32 位整数转换为浮点数，写入 `FPn` |
+| `FPUSH` | `FPUSH FPn` | 将 `FPn` 按 DWORD 压栈 |
+| `FPOP` | `FPOP FPn` | 从栈顶弹出 DWORD 到 `FPn` |
+
+### DFE 指令编码
+
+DFE 指令使用当前基础 ISA 中保留的扩展操作码空间。本文暂定操作码分配如下：
+
+| 操作码 | 指令 |
+|---|---|
+| `0x45` | `FMOV` |
+| `0x46` | `FLDI` |
+| `0x47` | `FLD` |
+| `0x48` | `FST` |
+| `0x49` | `FADD` |
+| `0x4A` | `FSUB` |
+| `0x4B` | `FMUL` |
+| `0x4C` | `FDIV` |
+| `0x4D` | `FSQRT` |
+| `0x4E` | `FNEG` |
+| `0x4F` | `FABS` |
+| `0x50` | `FCMP` |
+| `0x51` | `F2I` |
+| `0x52` | `I2F` |
+| `0x53` | `FPUSH` |
+| `0x54` | `FPOP` |
+
+DFE 指令操作码与基础 ISA 连续（`0x45` – `0x54`）。  
+`FP0` – `FP7` 在操作数表中的编码为 `0x00` – `0x07`。  
+`FPCR` 作为系统寄存器，编码为 `0x8`，可通过 `SETB` / `GETB` 访问。
+
+### DFE 与现有 ISA 的关系
+
+- `FP0` – `FP7` 是独立寄存器，不占用现有 `A/B/C/D1/D2/S/T/F/E/R/X/I`。
+- `FPCR` 作为系统寄存器编码 `0x8`，可通过 `SETB` / `GETB` 访问。
+- 浮点内存访问与整数内存访问一样受 MPU/物理边界检查约束。
+- 若某实现未提供 DFE，执行 DFE 指令应视为非法指令（`#II`）。
+- DFE 指令暂不支持 `REP` 前缀。
+
+## DOCTOR 双精度浮点扩展（DDE）
+
+DOCTOR 双精度浮点扩展（DOCTOR Double-precision Extension，DDE）提供 64 位
+双精度浮点运算能力，当前已在模拟器、dasm、dcc 中实现。
+
+### DDE 寄存器
+
+| 寄存器 | 宽度 | 说明 |
+|---|---|---|
+| `DP0` – `DP7` | 64 位 | 8 个双精度浮点数据寄存器 |
+| `FPCR` | 32 位 | 继续使用 DFE 的浮点控制/状态寄存器；DDE 的 `DZ`/`INV` 也记录在 `FPCR` 中 |
+
+### DDE 指令
+
+除 `DLD`/`DST` 外，DDE 指令不区分 `BYTE/WORD/DWORD`；双精度内存访问固定为 8 字节。
+
+| 指令 | 格式 | 语义 |
+|---|---|---|
+| `DMOV` | `DMOV DPn, DPm` | `DPn = DPm` |
+| `DLDI` | `DLDI DPn, imm64` | 将 64 位立即数作为双精度位模式载入 `DPn` |
+| `DLD` | `DLD DPn, *DPR/*E` | 从内存读取 8 字节双精度值到 `DPn` |
+| `DST` | `DST *DPR/*E, DPn` | 将 `DPn` 的 8 字节双精度值写入内存 |
+| `DADD` | `DADD DPn, DPm` | `DPn = DPn + DPm` |
+| `DSUB` | `DSUB DPn, DPm` | `DPn = DPn - DPm` |
+| `DMUL` | `DMUL DPn, DPm` | `DPn = DPn * DPm` |
+| `DDIV` | `DDIV DPn, DPm` | `DPn = DPn / DPm` |
+| `DSQRT` | `DSQRT DPn` | `DPn = sqrt(DPn)` |
+| `DNEG` | `DNEG DPn` | `DPn = -DPn` |
+| `DABS` | `DABS DPn` | `DPn = |DPn|` |
+| `DCMP` | `DCMP DPn, DPm` | 比较 `DPn` 与 `DPm`，结果写入 `C`：小于 → `-1`，等于 → `0`，大于 → `1`；NaN 置 `FPCR.INV` |
+| `D2I` | `D2I DR, DPn` | 将 `DPn` 转换为 32 位整数写入 `DR` |
+| `I2D` | `I2D DPn, DR` | 将 `DR` 中的 32 位整数转换为双精度写入 `DPn` |
+| `DPUSH` | `DPUSH DPn` | 将 `DPn` 按 8 字节压栈（先低 4 字节，再高 4 字节） |
+| `DPOP` | `DPOP DPn` | 从栈顶弹出 8 字节到 `DPn` |
+| `F2D` | `F2D DPn, FPm` | 单精度 → 双精度：`DPn = (double)FPm` |
+| `D2F` | `D2F FPn, DPm` | 双精度 → 单精度：`FPn = (float)DPm` |
+
+### DDE 指令编码
+
+| 操作码 | 指令 |
+|---|---|
+| `0x55` | `DMOV` |
+| `0x56` | `DLDI` |
+| `0x57` | `DLD` |
+| `0x58` | `DST` |
+| `0x59` | `DADD` |
+| `0x5A` | `DSUB` |
+| `0x5B` | `DMUL` |
+| `0x5C` | `DDIV` |
+| `0x5D` | `DSQRT` |
+| `0x5E` | `DNEG` |
+| `0x5F` | `DABS` |
+| `0x60` | `DCMP` |
+| `0x61` | `D2I` |
+| `0x62` | `I2D` |
+| `0x63` | `DPUSH` |
+| `0x64` | `DPOP` |
+| `0x65` | `F2D` |
+| `0x66` | `D2F` |
+
+`DP0` – `DP7` 在操作数表中的编码为 `0x00` – `0x07`，与 `FP0` – `FP7` 共用
+同一半字节编码区间；具体是浮点还是双精度由操作码决定。
+
+### DDE 与现有 ISA 的关系
+
+- `DP0` – `DP7` 是独立寄存器，不占用整数寄存器或 `FP0` – `FP7`。
+- DDE 内存访问与整数/单精度浮点内存访问一样受 MPU/物理边界检查约束。
+- DDE 指令暂不支持 `REP` 前缀。
 
 ## 机器码编码示例
 
