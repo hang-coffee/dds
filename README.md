@@ -1,4 +1,4 @@
-# doctor-emu
+# DOCTOR Development Suite
 
 DOCTOR 是一个低端教学/实验用指令集架构。本仓库包含：
 
@@ -21,7 +21,7 @@ DOCTOR 是一个低端教学/实验用指令集架构。本仓库包含：
 ## 目录结构
 
 ```
-doctor-emu/
+dds/
 ├── doctor-sim/
 │   ├── dev_specification.md
 │   ├── Makefile
@@ -59,20 +59,21 @@ doctor-emu/
 ## 快速构建
 
 ```sh
-# 模拟器
+# 一键构建全部子项目（doctor-sim / dasm / dcc / dlinker / dda）
+make
+
+# 也可以单独构建某个子项目
 make -C doctor-sim
-
-# 汇编器
 make -C dasm
-
-# C 编译器
 make -C dcc
-
-# 链接器
 make -C dlinker
-
-# ELF 反汇编器
 make -C dda
+
+# 清理全部构建产物
+make clean
+
+# 运行各子项目测试
+make test
 ```
 
 ## 简单工具链示例

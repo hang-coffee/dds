@@ -1,0 +1,37 @@
+# Build directories
+build/
+**/build/
+
+# Compiled objects and dependencies
+*.o
+*.d
+*.obj
+
+# Executables / tools
+/dasm/dasm
+/dasm/dasm_test
+/dcc/dcc
+/dlinker/dlinker
+/dda/dda
+
+# Generated binaries and temporary outputs
+*.bin
+*.tmp
+*.log
+*.out
+
+# Editor/swap files
+*.swp
+.*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+
+# Keep prebuilt test binaries under doctor-sim/tests/bin
+!doctor-sim/tests/bin/
+!doctor-sim/tests/bin/*.bin

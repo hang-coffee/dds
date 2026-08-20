@@ -1,55 +1,52 @@
 # ============================================================
-# DOCTOR 模拟器 Makefile
+# DOCTOR Development Suite - 根目录统一构建
+#
+# 用法:
+#   make           构建全部子项目
+#   make test      运行各子项目测试
+#   make clean     清理全部构建产物
+#   make help      显示帮助
 # ============================================================
 
-CC       = gcc
-CFLAGS   = -std=gnu17 -Wall -Wextra -O2 -g -Isrc -MMD -MP
-LDFLAGS  = -lm
+SUB_DIRS := doctor-sim dasm dcc dlinker dda
 
-TARGET   = build/bin/doctor_sim
-SRC_DIR  = src
-BUILD_DIR = build
-OBJ_DIR  = $(BUILD_DIR)/obj
+.PHONY: all clean test help
 
-# 自动收集所有 .c 源文件（包括子目录）
-SOURCES := $(shell find $(SRC_DIR) -name "*.c")
-OBJECTS := $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SOURCES))
-DEPS    := $(OBJECTS:.o=.d)
+all:
+	@set -e; \
+	for d in $(SUB_DIRS); do \
+		echo "===== building $$d ====="; \
+		$(MAKE) -C $$d; \
+	done
+	@echo "===== all projects built ====="
 
-# 默认目标
-all: $(TARGET)
-
-# 链接最终可执行文件
-$(TARGET): $(OBJECTS) | $(BUILD_DIR)/bin
-	$(CC) $^ -o $@ $(LDFLAGS)
-
-# 编译每个 .c 到 .o（自动创建子目录）
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
-	mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# 创建必要的目录
-$(BUILD_DIR)/bin $(OBJ_DIR):
-	mkdir -p $@
-
-# 清理编译产物
 clean:
-	rm -rf $(BUILD_DIR)
+	@set -e; \
+	for d in $(SUB_DIRS); do \
+		echo "===== cleaning $$d ====="; \
+		$(MAKE) -C $$d clean; \
+	done
+	@echo "===== all projects cleaned ====="
 
-# 运行（默认加载当前目录的 code.bin 与 data.bin）
-run: $(TARGET)
-	./$(TARGET)
+# 运行各子项目已有的测试入口。
+# doctor-sim 没有统一 test 目标，因此直接调用其测试脚本。
+test:
+	@set -e; \
+	echo "===== dasm test ====="; \
+	$(MAKE) -C dasm test; \
+	echo "===== dcc test ====="; \
+	$(MAKE) -C dcc test; \
+	echo "===== dlinker test ====="; \
+	$(MAKE) -C dlinker test; \
+	echo "===== doctor-sim tests ====="; \
+	sh doctor-sim/tests/run_dasm_test.sh; \
+	sh doctor-sim/tests/run_irq_test.sh; \
+	sh doctor-sim/tests/run_display_test.sh
+	@echo "===== all tests passed ====="
 
-# 调试模式（带 DEBUG 宏，开启 INFO 日志）
-debug: CFLAGS += -DDEBUG
-debug: clean $(TARGET)
-
-# 查看每个目标文件的依赖关系
-show-deps:
-	@echo "SOURCES: $(SOURCES)"
-	@echo "OBJECTS: $(OBJECTS)"
-
-# 包含自动生成的依赖文件（-MMD 生成的 .d）
--include $(DEPS)
-
-.PHONY: all clean run debug show-deps
+help:
+	@echo "Available targets:"
+	@echo "  all     - build doctor-sim, dasm, dcc, dlinker, dda"
+	@echo "  test    - run subproject test suites"
+	@echo "  clean   - clean all build artifacts"
+	@echo "  help    - show this help"
