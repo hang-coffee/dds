@@ -109,6 +109,10 @@ TokenArray tokenize(const char *src) {
                     ft.text = buf;
                     ft.fval = strtod(buf, NULL);
                     ft.line = line;
+                    if (buf[len-1] == 'f' || buf[len-1] == 'F')
+                        ft.is_double = 0;
+                    else
+                        ft.is_double = 1;
                     ta_push(&ta, ft);
                     continue;
                 }

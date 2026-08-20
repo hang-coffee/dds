@@ -11,7 +11,8 @@ typedef enum {
     EXPR_UNARY,
     EXPR_ASSIGN,
     EXPR_CALL,
-    EXPR_INCDEC
+    EXPR_INCDEC,
+    EXPR_CAST
 } ExprKind;
 
 struct Expr {

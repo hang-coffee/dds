@@ -18,6 +18,7 @@ typedef struct {
     int line;
     int is_long;
     int is_unsigned;
+    int is_double;
 } Token;
 
 typedef struct {

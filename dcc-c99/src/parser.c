@@ -145,8 +145,9 @@ static Expr *parse_primary(Parser *p) {
     if (t->kind == T_FLOAT) {
         Expr *e = expr_new(EXPR_NUM);
         e->ival = (long long)t->fval;
-        e->is_float = 1;
-        e->type_size = 4;
+        e->is_float = !t->is_double;
+        e->is_double = t->is_double;
+        e->type_size = t->is_double ? 8 : 4;
         e->line = t->line;
         e->fval = t->fval;
         return e;
@@ -216,6 +217,29 @@ static Expr *parse_postfix(Parser *p) {
 }
 
 static Expr *parse_unary(Parser *p) {
+    /* 强制类型转换 (int)/(float)/(double) expr */
+    if (peek(p,0)->kind == T_OP && strcmp(peek(p,0)->text, "(") == 0) {
+        Token *nt = peek(p,1);
+        int is_cast_type = nt->kind == T_KW &&
+            (strcmp(nt->text,"int")==0 || strcmp(nt->text,"char")==0 ||
+             strcmp(nt->text,"short")==0 || strcmp(nt->text,"long")==0 ||
+             strcmp(nt->text,"unsigned")==0 || strcmp(nt->text,"signed")==0 ||
+             strcmp(nt->text,"const")==0 || strcmp(nt->text,"float")==0 ||
+             strcmp(nt->text,"double")==0 || strcmp(nt->text,"void")==0);
+        if (is_cast_type) {
+            next(p); /* ( */
+            TypeInfo ty = parse_type_spec(p);
+            if (!expect_op(p, ")")) return NULL;
+            Expr *e = expr_new(EXPR_CAST);
+            e->type_size = ty.size;
+            e->is_float = ty.is_float;
+            e->is_double = ty.is_double;
+            e->is_unsigned = ty.is_unsigned;
+            e->r = parse_unary(p);
+            if (!e->r) { expr_free(e); return NULL; }
+            return e;
+        }
+    }
     if (peek(p,0)->kind == T_OP && (strcmp(peek(p,0)->text,"-")==0 ||
         strcmp(peek(p,0)->text,"!")==0 || strcmp(peek(p,0)->text,"~")==0)) {
         Token *t = next(p);

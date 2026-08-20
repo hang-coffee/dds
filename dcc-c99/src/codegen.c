@@ -701,18 +701,61 @@ static void emit_signed_div32(CodeGen *cg) {
 }
 
 
+static void emit_conv_to_float(CodeGen *cg, Expr *e) {
+    if (expr_is_double(cg, e)) cg_emit(cg, "D2F FP0, DP0");
+    else if (!expr_is_float(cg, e)) cg_emit(cg, "I2F FP0, A");
+}
+
+static void emit_conv_to_double(CodeGen *cg, Expr *e) {
+    if (expr_is_float(cg, e)) cg_emit(cg, "F2D DP0, FP0");
+    else if (!expr_is_double(cg, e)) cg_emit(cg, "I2D DP0, A");
+}
+
+static void emit_conv_to_int(CodeGen *cg, Expr *e) {
+    if (expr_is_float(cg, e)) cg_emit(cg, "F2I A, FP0");
+    else if (expr_is_double(cg, e)) cg_emit(cg, "D2I A, DP0");
+}
+
 static void gen_fp_binop(CodeGen *cg, Expr *e) {
     const char *op = e->op;
-    int is_double = expr_is_double(cg, e);
+    int is_double = expr_is_double(cg, e->l) || expr_is_double(cg, e->r);
     /* 右操作数 → FP1/DP1 */
     gen_expr(cg, e->r);
     if (is_double) {
+        emit_conv_to_double(cg, e->r);
         cg_emit(cg, "DMOV DP1, DP0");
     } else {
+        emit_conv_to_float(cg, e->r);
         cg_emit(cg, "FMOV FP1, FP0");
     }
     /* 左操作数 → FP0/DP0 */
     gen_expr(cg, e->l);
+    if (is_double) {
+        emit_conv_to_double(cg, e->l);
+    } else {
+        emit_conv_to_float(cg, e->l);
+    }
+    if (strcmp(op,"==")==0 || strcmp(op,"!=")==0 || strcmp(op,"<")==0 ||
+        strcmp(op,"<=")==0 || strcmp(op,">")==0 || strcmp(op,">=")==0) {
+        cg_emit(cg, is_double ? "DCMP DP0, DP1" : "FCMP FP0, FP1");
+        const char *lt = cg_new_label(cg, "FC");
+        const char *le = cg_new_label(cg, "FC");
+        cg_emit(cg, "ZERO T");
+        cg_emit(cg, "LET E, DWORD %s", lt);
+        if (strcmp(op,"==")==0) cg_emit(cg, "JZ");
+        else if (strcmp(op,"!=")==0) cg_emit(cg, "JNZ");
+        else if (strcmp(op,"<")==0) cg_emit(cg, "JL DWORD T");
+        else if (strcmp(op,"<=")==0) cg_emit(cg, "JNG DWORD T");
+        else if (strcmp(op,">")==0) cg_emit(cg, "JG DWORD T");
+        else cg_emit(cg, "JNL DWORD T");
+        cg_emit(cg, "LET A, DWORD 0");
+        cg_emit(cg, "LET E, DWORD %s", le);
+        cg_emit(cg, "JMP");
+        cg_emit(cg, "%s:", lt);
+        cg_emit(cg, "LET A, DWORD 1");
+        cg_emit(cg, "%s:", le);
+        return;
+    }
     if (strcmp(op,"+")==0) cg_emit(cg, is_double ? "DADD DP0, DP1" : "FADD FP0, FP1");
     else if (strcmp(op,"-")==0) cg_emit(cg, is_double ? "DSUB DP0, DP1" : "FSUB FP0, FP1");
     else if (strcmp(op,"*")==0) cg_emit(cg, is_double ? "DMUL DP0, DP1" : "FMUL FP0, FP1");
@@ -722,7 +765,9 @@ static void gen_fp_binop(CodeGen *cg, Expr *e) {
 
 static void gen_binop(CodeGen *cg, Expr *e) {
     const char *op = e->op;
-    if (strcmp(op, "&&") != 0 && strcmp(op, "||") != 0 && (expr_is_float(cg, e) || expr_is_double(cg, e))) {
+    int has_fp = expr_is_float(cg, e->l) || expr_is_double(cg, e->l) ||
+                 expr_is_float(cg, e->r) || expr_is_double(cg, e->r);
+    if (strcmp(op, "&&") != 0 && strcmp(op, "||") != 0 && has_fp) {
         gen_fp_binop(cg, e);
         return;
     }
@@ -835,16 +880,21 @@ static void gen_binop(CodeGen *cg, Expr *e) {
 static void gen_assign(CodeGen *cg, Expr *e) {
     gen_expr(cg, e->r);
     if (var_is_float(cg, e->l)) {
+        emit_conv_to_float(cg, e->r);
         var_addr(cg, e->l);
         cg_emit(cg, "MOV B, A");
         cg_emit(cg, "FST *B, FP0");
         return;
     }
     if (var_is_double(cg, e->l)) {
+        emit_conv_to_double(cg, e->r);
         var_addr(cg, e->l);
         cg_emit(cg, "MOV B, A");
         cg_emit(cg, "DST *B, DP0");
         return;
+    }
+    if (expr_is_float(cg, e->r) || expr_is_double(cg, e->r)) {
+        emit_conv_to_int(cg, e->r);
     }
     cg_emit(cg, "PUSH DWORD A");
     var_addr(cg, e->l);
@@ -913,8 +963,13 @@ static int expr_is_float(CodeGen *cg, Expr *e) {
     switch (e->kind) {
         case EXPR_NUM: return e->is_float;
         case EXPR_VAR: return var_is_float(cg, e);
-        case EXPR_BIN: return expr_is_float(cg, e->l) || expr_is_float(cg, e->r);
+        case EXPR_BIN:
+            if (strcmp(e->op,"==")==0 || strcmp(e->op,"!=")==0 || strcmp(e->op,"<")==0 ||
+                strcmp(e->op,"<=")==0 || strcmp(e->op,">")==0 || strcmp(e->op,">=")==0 ||
+                strcmp(e->op,"&&")==0 || strcmp(e->op,"||")==0) return 0;
+            return expr_is_float(cg, e->l) || expr_is_float(cg, e->r);
         case EXPR_UNARY: return expr_is_float(cg, e->r);
+        case EXPR_CAST: return e->is_float;
         default: return 0;
     }
 }
@@ -924,8 +979,13 @@ static int expr_is_double(CodeGen *cg, Expr *e) {
     switch (e->kind) {
         case EXPR_NUM: return e->is_double;
         case EXPR_VAR: return var_is_double(cg, e);
-        case EXPR_BIN: return expr_is_double(cg, e->l) || expr_is_double(cg, e->r);
+        case EXPR_BIN:
+            if (strcmp(e->op,"==")==0 || strcmp(e->op,"!=")==0 || strcmp(e->op,"<")==0 ||
+                strcmp(e->op,"<=")==0 || strcmp(e->op,">")==0 || strcmp(e->op,">=")==0 ||
+                strcmp(e->op,"&&")==0 || strcmp(e->op,"||")==0) return 0;
+            return expr_is_double(cg, e->l) || expr_is_double(cg, e->r);
         case EXPR_UNARY: return expr_is_double(cg, e->r);
+        case EXPR_CAST: return e->is_double;
         default: return 0;
     }
 }
@@ -1057,6 +1117,12 @@ static void gen_expr(CodeGen *cg, Expr *e) {
         case EXPR_INCDEC:
             gen_incdec(cg, e, e->postfix);
             break;
+        case EXPR_CAST:
+            gen_expr(cg, e->r);
+            if (e->is_float) emit_conv_to_float(cg, e->r);
+            else if (e->is_double) emit_conv_to_double(cg, e->r);
+            else emit_conv_to_int(cg, e->r);
+            break;
     }
 }
 
@@ -1071,15 +1137,27 @@ static void gen_stmt(CodeGen *cg, Stmt *s) {
         case STMT_DECL:
             if (s->expr) {
                 gen_expr(cg, s->expr);
-                cg_emit(cg, "PUSH DWORD A");
                 Expr tmp;
                 memset(&tmp, 0, sizeof(tmp));
                 tmp.kind = EXPR_VAR;
                 tmp.name = s->name;
-                var_addr(cg, &tmp);
-                cg_emit(cg, "MOV B, A");
-                cg_emit(cg, "POP DWORD A");
-                emit_store_to_b(cg, s->decl_size > 0 ? s->decl_size : 4);
+                if (s->decl_float) {
+                    emit_conv_to_float(cg, s->expr);
+                    var_addr(cg, &tmp);
+                    cg_emit(cg, "MOV B, A");
+                    cg_emit(cg, "FST *B, FP0");
+                } else if (s->decl_double) {
+                    emit_conv_to_double(cg, s->expr);
+                    var_addr(cg, &tmp);
+                    cg_emit(cg, "MOV B, A");
+                    cg_emit(cg, "DST *B, DP0");
+                } else {
+                    cg_emit(cg, "PUSH DWORD A");
+                    var_addr(cg, &tmp);
+                    cg_emit(cg, "MOV B, A");
+                    cg_emit(cg, "POP DWORD A");
+                    emit_store_to_b(cg, s->decl_size > 0 ? s->decl_size : 4);
+                }
             }
             break;
         case STMT_RETURN: {

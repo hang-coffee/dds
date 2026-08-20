@@ -47,7 +47,7 @@ dcc-c99/
 - `int` / `char` / `void` / `short` / `long` / `long long` / `unsigned` / `signed` / `const`
 - `long` / `long long` 使用 8 字节槽位存储，支持 64 位加减乘除/比较/位运算/移位（含符号区分）
 - `char` / `short` 使用 1/2 字节存储，加载时按 signed/unsigned 正确扩展；`int` 运算区分有符号/无符号
-- `float` / `double` 支持基本存储、赋值、四则运算与函数传参/返回（使用 DFE/DDE）
+- `float` / `double` 支持存储、赋值、四则运算、比较、函数传参/返回，以及 `int` / `float` / `double` 之间的转换和强制类型转换（使用 DFE/DDE）
 - 全局变量与函数
 - 局部变量
 - `return` / `if/else` / `while` / `for` / `break` / `continue`

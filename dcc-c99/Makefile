@@ -23,8 +23,10 @@ test: all
 	../dasm/dasm /tmp/dcc-c99-signed_types.asm /tmp/dcc-c99-signed_types.code /tmp/dcc-c99-signed_types.data
 	./dcc-c99 tests/float_test.c /tmp/dcc-c99-float_test.asm
 	../dasm/dasm /tmp/dcc-c99-float_test.asm /tmp/dcc-c99-float_test.code /tmp/dcc-c99-float_test.data
+	./dcc-c99 tests/fp_conv.c /tmp/dcc-c99-fp_conv.asm
+	../dasm/dasm /tmp/dcc-c99-fp_conv.asm /tmp/dcc-c99-fp_conv.code /tmp/dcc-c99-fp_conv.data
 
 clean:
-	rm -f dcc-c99 $(OBJ) /tmp/dcc-c99-hello.* /tmp/dcc-c99-types.* /tmp/dcc-c99-long64.* /tmp/dcc-c99-signed_types.* /tmp/dcc-c99-float_test.*
+	rm -f dcc-c99 $(OBJ) /tmp/dcc-c99-hello.* /tmp/dcc-c99-types.* /tmp/dcc-c99-long64.* /tmp/dcc-c99-signed_types.* /tmp/dcc-c99-float_test.* /tmp/dcc-c99-fp_conv.*
 
 .PHONY: all test clean
