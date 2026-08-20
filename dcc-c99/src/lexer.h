@@ -12,8 +12,10 @@ typedef enum {
 typedef struct {
     TokenKind kind;
     char *text;
-    int ival;
+    long long ival;
     int line;
+    int is_long;
+    int is_unsigned;
 } Token;
 
 typedef struct {

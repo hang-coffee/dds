@@ -16,7 +16,9 @@ typedef enum {
 
 struct Expr {
     ExprKind kind;
-    int ival;              /* EXPR_NUM */
+    long long ival;        /* EXPR_NUM */
+    int type_size;         /* EXPR_NUM / 表达式类型尺寸 */
+    int is_unsigned;       /* EXPR_NUM / 表达式是否无符号 */
     char *name;            /* EXPR_VAR / EXPR_CALL */
     char *op;              /* EXPR_BIN / EXPR_UNARY / EXPR_ASSIGN / EXPR_INCDEC */
     Expr *l, *r;           /* children */
@@ -50,16 +52,21 @@ struct Stmt {
     int nitems;
     char *name;            /* STMT_DECL */
     int decl_size;         /* STMT_DECL */
+    int decl_unsigned;     /* STMT_DECL */
     Stmt *next;            /* 未使用，保留 */
 };
 
 typedef struct {
     char *name;
     char **params;
+    int *param_sizes;
+    int *param_unsigned;
     int nparams;
     Stmt **body;
     int nbody;
     int ret_void;
+    int ret_size;
+    int ret_unsigned;
 } Function;
 
 typedef struct {
@@ -67,6 +74,7 @@ typedef struct {
     int has_init;
     int init;
     int type_size;
+    int is_unsigned;
 } Global;
 
 typedef struct {

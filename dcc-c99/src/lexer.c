@@ -75,11 +75,31 @@ TokenArray tokenize(const char *src) {
                     t.ival = t.ival * base + d;
                     i++;
                 }
+                while (src[i]=='u' || src[i]=='U' || src[i]=='l' || src[i]=='L') {
+                    if (src[i]=='u' || src[i]=='U') t.is_unsigned = 1;
+                    else t.is_long = 1;
+                    i++;
+                }
             } else {
                 t.ival = 0;
                 while (isdigit((unsigned char)src[i])) {
                     t.ival = t.ival * 10 + (src[i]-'0');
                     i++;
+                }
+                int suffix = 0;
+                while (src[i]=='u' || src[i]=='U' || src[i]=='l' || src[i]=='L') {
+                    if (src[i]=='u' || src[i]=='U') t.is_unsigned = 1;
+                    else t.is_long = 1;
+                    suffix = 1;
+                    i++;
+                }
+                if (suffix) {
+                    size_t len = (size_t)(src + i - start);
+                    t.text = (char *)malloc(len + 1);
+                    memcpy(t.text, start, len);
+                    t.text[len] = 0;
+                    ta_push(&ta, t);
+                    continue;
                 }
             }
             size_t len = (size_t)(src + i - start);

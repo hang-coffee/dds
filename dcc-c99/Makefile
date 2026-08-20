@@ -17,8 +17,10 @@ test: all
 	../dasm/dasm /tmp/dcc-c99-hello.asm /tmp/dcc-c99-hello.code /tmp/dcc-c99-hello.data
 	./dcc-c99 tests/types.c /tmp/dcc-c99-types.asm
 	../dasm/dasm /tmp/dcc-c99-types.asm /tmp/dcc-c99-types.code /tmp/dcc-c99-types.data
+	./dcc-c99 tests/long64.c /tmp/dcc-c99-long64.asm
+	../dasm/dasm /tmp/dcc-c99-long64.asm /tmp/dcc-c99-long64.code /tmp/dcc-c99-long64.data
 
 clean:
-	rm -f dcc-c99 $(OBJ) /tmp/dcc-c99-hello.* /tmp/dcc-c99-types.*
+	rm -f dcc-c99 $(OBJ) /tmp/dcc-c99-hello.* /tmp/dcc-c99-types.* /tmp/dcc-c99-long64.*
 
 .PHONY: all test clean

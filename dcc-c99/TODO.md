@@ -4,8 +4,8 @@
 
 ## 类型系统
 
-- [x] `short` / `long` / `long long`（基础解析支持，运算暂按 4 字节槽位处理）
-- [x] `unsigned` / `signed` 限定符（基础解析支持，暂不区分符号语义）
+- [x] `short` / `long` / `long long`（`long`/`long long` 已使用 8 字节槽位，支持 64 位加减乘除/比较/位运算/移位）
+- [x] `unsigned` / `signed` 限定符（64 位比较/右移/除法已区分有符号与无符号）
 - [ ] `float` / `double` / `long double`
 - [ ] `_Bool`
 - [x] `const`（基础解析支持，暂不实施只读检查）

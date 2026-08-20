@@ -7,11 +7,15 @@
 typedef struct {
     char *name;
     int offset;
+    int size;
+    int is_unsigned;
 } VarInfo;
 
 typedef struct {
     char *name;
     int offset;
+    int size;
+    int is_unsigned;
 } ParamInfo;
 
 typedef struct {
@@ -31,6 +35,10 @@ typedef struct {
     int nloops, caploops;
     int frame_size;
 } CodeGen;
+
+static VarInfo *local_info(CodeGen *cg, const char *name);
+static ParamInfo *param_info(CodeGen *cg, const char *name);
+static void emit_store_to_b(CodeGen *cg, int size);
 
 static char *xstrdup(const char *s) {
     size_t n = strlen(s) + 1;
@@ -67,13 +75,46 @@ static int global_exists(Program *p, const char *name) {
     return 0;
 }
 
-static void cg_push_local(CodeGen *cg, const char *name, int offset) {
+static Global *global_info(Program *p, const char *name) {
+    for (int i = 0; i < p->nglobals; i++)
+        if (strcmp(p->globals[i].name, name) == 0) return &p->globals[i];
+    return NULL;
+}
+
+static int var_size(CodeGen *cg, Expr *e) {
+    if (e->kind != EXPR_VAR) return 4;
+    VarInfo *li = local_info(cg, e->name);
+    if (li) return li->size == 8 ? 8 : 4;
+    ParamInfo *pi = param_info(cg, e->name);
+    if (pi) return pi->size == 8 ? 8 : 4;
+    Global *g = global_info(cg->prog, e->name);
+    if (g) return g->type_size == 8 ? 8 : 4;
+    return 4;
+}
+
+static int var_unsigned(CodeGen *cg, Expr *e) {
+    if (e->kind != EXPR_VAR) return 0;
+    VarInfo *li = local_info(cg, e->name);
+    if (li) return li->is_unsigned;
+    ParamInfo *pi = param_info(cg, e->name);
+    if (pi) return pi->is_unsigned;
+    Global *g = global_info(cg->prog, e->name);
+    if (g) return g->is_unsigned;
+    return 0;
+}
+
+static int expr_size(CodeGen *cg, Expr *e);
+static int expr_unsigned(CodeGen *cg, Expr *e);
+
+static void cg_push_local(CodeGen *cg, const char *name, int offset, int size, int is_unsigned) {
     if (cg->nlocals >= cg->caplocals) {
         cg->caplocals = cg->caplocals ? cg->caplocals * 2 : 16;
         cg->locals = (VarInfo *)realloc(cg->locals, (size_t)cg->caplocals * sizeof(VarInfo));
     }
     cg->locals[cg->nlocals].name = xstrdup(name);
     cg->locals[cg->nlocals].offset = offset;
+    cg->locals[cg->nlocals].size = size;
+    cg->locals[cg->nlocals].is_unsigned = is_unsigned;
     cg->nlocals++;
 }
 
@@ -83,13 +124,21 @@ static int local_offset(CodeGen *cg, const char *name) {
     return -1;
 }
 
-static void cg_push_param(CodeGen *cg, const char *name, int offset) {
+static VarInfo *local_info(CodeGen *cg, const char *name) {
+    for (int i = 0; i < cg->nlocals; i++)
+        if (strcmp(cg->locals[i].name, name) == 0) return &cg->locals[i];
+    return NULL;
+}
+
+static void cg_push_param(CodeGen *cg, const char *name, int offset, int size, int is_unsigned) {
     if (cg->nparams >= cg->capparams) {
         cg->capparams = cg->capparams ? cg->capparams * 2 : 8;
         cg->params = (ParamInfo *)realloc(cg->params, (size_t)cg->capparams * sizeof(ParamInfo));
     }
     cg->params[cg->nparams].name = xstrdup(name);
     cg->params[cg->nparams].offset = offset;
+    cg->params[cg->nparams].size = size;
+    cg->params[cg->nparams].is_unsigned = is_unsigned;
     cg->nparams++;
 }
 
@@ -97,6 +146,12 @@ static int param_offset(CodeGen *cg, const char *name) {
     for (int i = 0; i < cg->nparams; i++)
         if (strcmp(cg->params[i].name, name) == 0) return cg->params[i].offset;
     return -1;
+}
+
+static ParamInfo *param_info(CodeGen *cg, const char *name) {
+    for (int i = 0; i < cg->nparams; i++)
+        if (strcmp(cg->params[i].name, name) == 0) return &cg->params[i];
+    return NULL;
 }
 
 static void cg_push_loop(CodeGen *cg, const char *brk, const char *cont) {
@@ -124,8 +179,9 @@ static void collect_locals(CodeGen *cg, Stmt **stmts, int n, int *frame) {
     for (int i = 0; i < n; i++) {
         Stmt *s = stmts[i];
         if (s->kind == STMT_DECL) {
-            cg_push_local(cg, s->name, *frame);
-            *frame += 4;
+            int sz = s->decl_size == 8 ? 8 : 4;
+            cg_push_local(cg, s->name, *frame, sz, s->decl_unsigned);
+            *frame += sz;
         } else if (s->kind == STMT_BLOCK) {
             collect_locals(cg, s->items, s->nitems, frame);
         } else if (s->kind == STMT_IF) {
@@ -179,7 +235,13 @@ static void gen_call(CodeGen *cg, Expr *e) {
     cg_emit(cg, "PUSH DWORD A");
     for (int i = 0; i < e->nargs; i++) {
         gen_expr(cg, e->args[i]);
-        cg_emit(cg, "PUSH DWORD A");
+        if (expr_size(cg, e->args[i]) == 8) {
+            cg_emit(cg, "PUSH DWORD A");
+            cg_emit(cg, "PUSH DWORD D1");
+            argbytes += 4;
+        } else {
+            cg_emit(cg, "PUSH DWORD A");
+        }
     }
     const char *ret = cg_new_label(cg, "RET");
     cg_emit(cg, "LET E, DWORD %s", ret);
@@ -189,11 +251,354 @@ static void gen_call(CodeGen *cg, Expr *e) {
     cg_emit(cg, "%s:", ret);
     if (argbytes) cg_emit(cg, "SUB DWORD S, %d", argbytes);
     cg_emit(cg, "POP DWORD F");
-    cg_emit(cg, "MOV A, D1");
+    int rsz = 4;
+    for (int i = 0; i < cg->prog->nfuncs; i++)
+        if (strcmp(cg->prog->funcs[i].name, e->name) == 0)
+            rsz = cg->prog->funcs[i].ret_size;
+    if (rsz != 8)
+        cg_emit(cg, "MOV A, D1");
+}
+
+
+/* ---------- 64 位整数运算辅助 ---------- */
+/* 约定：A=低32位，D1=高32位；右操作数在 B=低32位，R=高32位。 */
+
+static void emit_long_add(CodeGen *cg) {
+    const char *lno = cg_new_label(cg, "LA");
+    cg_emit(cg, "ADD DWORD A, B");
+    cg_emit(cg, "MOV C, A");
+    cg_emit(cg, "LET E, DWORD %s", lno);
+    cg_emit(cg, "JNB DWORD B");
+    cg_emit(cg, "INC D1");
+    cg_emit(cg, "%s:", lno);
+    cg_emit(cg, "ADD DWORD D1, R");
+}
+
+static void emit_long_sub(CodeGen *cg) {
+    const char *lno = cg_new_label(cg, "LS");
+    cg_emit(cg, "MOV C, A");
+    cg_emit(cg, "LET E, DWORD %s", lno);
+    cg_emit(cg, "JNB DWORD B");
+    cg_emit(cg, "SUB DWORD D1, 1");
+    cg_emit(cg, "%s:", lno);
+    cg_emit(cg, "SUB DWORD A, B");
+    cg_emit(cg, "SUB DWORD D1, R");
+}
+
+static void emit_long_mul(CodeGen *cg) {
+    cg_emit(cg, "PUSH DWORD D1");
+    cg_emit(cg, "MUL DWORD A, B");
+    cg_emit(cg, "MOV C, D1");
+    cg_emit(cg, "PUSH DWORD D2");
+    cg_emit(cg, "MUL DWORD A, R");
+    cg_emit(cg, "ADD DWORD C, D2");
+    cg_emit(cg, "POP DWORD D2");
+    cg_emit(cg, "MOV A, D2");
+    cg_emit(cg, "POP DWORD D2");
+    cg_emit(cg, "PUSH DWORD A");
+    cg_emit(cg, "MUL DWORD D2, B");
+    cg_emit(cg, "ADD DWORD C, D2");
+    cg_emit(cg, "POP DWORD A");
+    cg_emit(cg, "MOV D1, C");
+}
+
+static void emit_long_neg(CodeGen *cg) {
+    const char *lnz = cg_new_label(cg, "LN");
+    const char *ld = cg_new_label(cg, "LN");
+    cg_emit(cg, "MNE DWORD A");
+    cg_emit(cg, "MOV C, A");
+    cg_emit(cg, "ZERO T");
+    cg_emit(cg, "CMP DWORD T");
+    cg_emit(cg, "LET E, DWORD %s", lnz);
+    cg_emit(cg, "JZ");
+    cg_emit(cg, "NEG D1");
+    cg_emit(cg, "LET E, DWORD %s", ld);
+    cg_emit(cg, "JMP");
+    cg_emit(cg, "%s:", lnz);
+    cg_emit(cg, "MNE DWORD D1");
+    cg_emit(cg, "%s:", ld);
+}
+
+static void emit_long_not(CodeGen *cg) {
+    cg_emit(cg, "NEG A");
+    cg_emit(cg, "NEG D1");
+}
+
+static void emit_long_udiv(CodeGen *cg) {
+    const char *lnz = cg_new_label(cg, "UZ");
+    cg_emit(cg, "ZERO T");
+    cg_emit(cg, "MOV C, B");
+    cg_emit(cg, "CMP DWORD T");
+    cg_emit(cg, "LET E, DWORD %s", lnz);
+    cg_emit(cg, "JNZ");
+    cg_emit(cg, "MOV C, R");
+    cg_emit(cg, "CMP DWORD T");
+    cg_emit(cg, "LET E, DWORD %s", lnz);
+    cg_emit(cg, "JNZ");
+    cg_emit(cg, "DIV DWORD A, B");
+    cg_emit(cg, "%s:", lnz);
+    cg_emit(cg, "PUSH DWORD X");
+    cg_emit(cg, "PUSH DWORD I");
+    cg_emit(cg, "ZERO X");
+    cg_emit(cg, "ZERO I");
+    cg_emit(cg, "LET C, DWORD 64");
+    cg_emit(cg, "PUSH DWORD C");
+    cg_emit(cg, "ZERO T");
+    const char *lp = cg_new_label(cg, "UD");
+    cg_emit(cg, "%s:", lp);
+    cg_emit(cg, "MOV C, D1");
+    cg_emit(cg, "SHR DWORD C, 31");
+    cg_emit(cg, "MOV D2, X");
+    cg_emit(cg, "SHR DWORD D2, 31");
+    cg_emit(cg, "SHL DWORD X, 1");
+    cg_emit(cg, "OR DWORD X, C");
+    cg_emit(cg, "SHL DWORD I, 1");
+    cg_emit(cg, "OR DWORD I, D2");
+    cg_emit(cg, "MOV D2, A");
+    cg_emit(cg, "SHR DWORD D2, 31");
+    cg_emit(cg, "SHL DWORD A, 1");
+    cg_emit(cg, "SHL DWORD D1, 1");
+    cg_emit(cg, "OR DWORD D1, D2");
+    const char *lsk = cg_new_label(cg, "US");
+    const char *lds = cg_new_label(cg, "US");
+    cg_emit(cg, "MOV C, I");
+    cg_emit(cg, "LET E, DWORD %s", lsk);
+    cg_emit(cg, "JB DWORD R");
+    cg_emit(cg, "LET E, DWORD %s", lds);
+    cg_emit(cg, "JA DWORD R");
+    cg_emit(cg, "MOV C, X");
+    cg_emit(cg, "LET E, DWORD %s", lsk);
+    cg_emit(cg, "JB DWORD B");
+    cg_emit(cg, "%s:", lds);
+    cg_emit(cg, "MOV C, X");
+    cg_emit(cg, "LET E, DWORD %s_nb", lsk);
+    cg_emit(cg, "JNB DWORD B");
+    cg_emit(cg, "SUB DWORD I, 1");
+    cg_emit(cg, "%s_nb:", lsk);
+    cg_emit(cg, "SUB DWORD X, B");
+    cg_emit(cg, "SUB DWORD I, R");
+    cg_emit(cg, "LET C, DWORD 1");
+    cg_emit(cg, "OR DWORD A, C");
+    cg_emit(cg, "%s:", lsk);
+    cg_emit(cg, "POP DWORD D2");
+    cg_emit(cg, "DEC D2");
+    cg_emit(cg, "PUSH DWORD D2");
+    cg_emit(cg, "MOV C, D2");
+    cg_emit(cg, "ZERO T");
+    cg_emit(cg, "CMP DWORD T");
+    cg_emit(cg, "LET E, DWORD %s", lp);
+    cg_emit(cg, "JNZ");
+    cg_emit(cg, "POP DWORD D2");
+    cg_emit(cg, "MOV C, X");
+    cg_emit(cg, "MOV D2, I");
+    cg_emit(cg, "POP DWORD I");
+    cg_emit(cg, "POP DWORD X");
+}
+
+static void emit_long_divmod(CodeGen *cg, int want_rem, int uns) {
+    if (uns) {
+        emit_long_udiv(cg);
+        if (want_rem) {
+            cg_emit(cg, "MOV A, C");
+            cg_emit(cg, "MOV D1, D2");
+        }
+        return;
+    }
+    /* 有符号：记录符号 → 取绝对值 → 无符号核心 → 修正 */
+    cg_emit(cg, "ZERO T");
+    cg_emit(cg, "MOV C, D1");
+    cg_emit(cg, "SHR DWORD C, 31");
+    cg_emit(cg, "PUSH DWORD C");
+    cg_emit(cg, "CMP DWORD T");
+    const char *lp1 = cg_new_label(cg, "SD");
+    cg_emit(cg, "LET E, DWORD %s", lp1);
+    cg_emit(cg, "JZ");
+    emit_long_neg(cg);
+    cg_emit(cg, "%s:", lp1);
+    cg_emit(cg, "ZERO T");
+    cg_emit(cg, "MOV C, R");
+    cg_emit(cg, "SHR DWORD C, 31");
+    cg_emit(cg, "PUSH DWORD C");
+    cg_emit(cg, "CMP DWORD T");
+    const char *lp2 = cg_new_label(cg, "SD");
+    cg_emit(cg, "LET E, DWORD %s", lp2);
+    cg_emit(cg, "JZ");
+    cg_emit(cg, "MOV A, B");
+    cg_emit(cg, "MOV D1, R");
+    emit_long_neg(cg);
+    cg_emit(cg, "MOV B, A");
+    cg_emit(cg, "MOV R, D1");
+    cg_emit(cg, "%s:", lp2);
+    emit_long_udiv(cg);
+    cg_emit(cg, "POP DWORD B");
+    cg_emit(cg, "POP DWORD R");
+    cg_emit(cg, "PUSH DWORD R");
+    cg_emit(cg, "PUSH DWORD C");
+    cg_emit(cg, "PUSH DWORD D2");
+    cg_emit(cg, "XOR DWORD R, B");
+    cg_emit(cg, "ZERO T");
+    cg_emit(cg, "MOV C, R");
+    cg_emit(cg, "CMP DWORD T");
+    const char *lq = cg_new_label(cg, "SQ");
+    cg_emit(cg, "LET E, DWORD %s", lq);
+    cg_emit(cg, "JZ");
+    emit_long_neg(cg);
+    cg_emit(cg, "%s:", lq);
+    if (!want_rem) {
+        cg_emit(cg, "POP DWORD D2");
+        cg_emit(cg, "POP DWORD C");
+        cg_emit(cg, "POP DWORD C");
+    } else {
+        cg_emit(cg, "POP DWORD D2");
+        cg_emit(cg, "POP DWORD C");
+        cg_emit(cg, "MOV A, C");
+        cg_emit(cg, "MOV D1, D2");
+        cg_emit(cg, "POP DWORD C");
+        cg_emit(cg, "ZERO T");
+        cg_emit(cg, "CMP DWORD T");
+        const char *lr = cg_new_label(cg, "SR");
+        cg_emit(cg, "LET E, DWORD %s", lr);
+        cg_emit(cg, "JZ");
+        emit_long_neg(cg);
+        cg_emit(cg, "%s:", lr);
+    }
+}
+
+static void emit_long_shift(CodeGen *cg, const char *op, int v, int uns) {
+    if (v == 0) return;
+    if (v >= 64) {
+        if (strcmp(op,"<<")==0 || uns) {
+            cg_emit(cg, "ZERO A");
+            cg_emit(cg, "ZERO D1");
+        } else {
+            cg_emit(cg, "MOV A, D1");
+            cg_emit(cg, "MSR DWORD A, 31");
+            cg_emit(cg, "MOV D1, A");
+        }
+        return;
+    }
+    if (v >= 32) {
+        if (strcmp(op,"<<")==0) {
+            cg_emit(cg, "MOV C, A");
+            cg_emit(cg, "SHL DWORD C, %d", v-32);
+            cg_emit(cg, "ZERO A");
+            cg_emit(cg, "MOV D1, C");
+        } else {
+            cg_emit(cg, "MOV A, D1");
+            cg_emit(cg, (uns ? "SHR DWORD A, %d" : "MSR DWORD A, %d"), v-32);
+            if (uns) cg_emit(cg, "ZERO D1");
+            else cg_emit(cg, "MSR DWORD D1, 31");
+        }
+        return;
+    }
+    if (strcmp(op,"<<")==0) {
+        cg_emit(cg, "MOV C, A");
+        cg_emit(cg, "SHR DWORD C, %d", 32-v);
+        cg_emit(cg, "SHL DWORD A, %d", v);
+        cg_emit(cg, "SHL DWORD D1, %d", v);
+        cg_emit(cg, "OR DWORD D1, C");
+    } else {
+        cg_emit(cg, "MOV C, D1");
+        cg_emit(cg, "SHL DWORD C, %d", 32-v);
+        cg_emit(cg, "SHR DWORD A, %d", v);
+        cg_emit(cg, (uns ? "SHR DWORD D1, %d" : "MSR DWORD D1, %d"), v);
+        cg_emit(cg, "OR DWORD A, C");
+    }
+}
+
+static void gen_long_binop(CodeGen *cg, Expr *e) {
+    const char *op = e->op;
+    int uns = expr_unsigned(cg, e);
+    /* 移位：右操作数必须是常量 */
+    if (strcmp(op,"<<")==0 || strcmp(op,">>")==0) {
+        if (e->r->kind != EXPR_NUM) {
+            fprintf(stderr, "line %d: 64 位移位量必须是常量\n", e->line);
+            exit(1);
+        }
+        gen_expr(cg, e->l);
+        if (expr_size(cg, e->l) != 8) {
+            if (expr_unsigned(cg, e->l)) cg_emit(cg, "ZERO D1");
+            else cg_emit(cg, "MSR DWORD D1, 31");
+        }
+        emit_long_shift(cg, op, e->r->ival, expr_unsigned(cg, e->l));
+        return;
+    }
+    /* 求右，提升到 64 位 */
+    gen_expr(cg, e->r);
+    if (expr_size(cg, e->r) != 8) {
+        if (expr_unsigned(cg, e->r)) cg_emit(cg, "ZERO D1");
+        else cg_emit(cg, "MSR DWORD D1, 31");
+    }
+    cg_emit(cg, "PUSH DWORD A");
+    cg_emit(cg, "PUSH DWORD D1");
+    gen_expr(cg, e->l);
+    if (expr_size(cg, e->l) != 8) {
+        if (expr_unsigned(cg, e->l)) cg_emit(cg, "ZERO D1");
+        else cg_emit(cg, "MSR DWORD D1, 31");
+    }
+    cg_emit(cg, "POP DWORD R");
+    cg_emit(cg, "POP DWORD B");
+    if (strcmp(op,"+")==0) emit_long_add(cg);
+    else if (strcmp(op,"-")==0) emit_long_sub(cg);
+    else if (strcmp(op,"*")==0) emit_long_mul(cg);
+    else if (strcmp(op,"/")==0) emit_long_divmod(cg, 0, uns);
+    else if (strcmp(op,"%")==0) emit_long_divmod(cg, 1, uns);
+    else if (strcmp(op,"&")==0) { cg_emit(cg, "AND DWORD A, B"); cg_emit(cg, "AND DWORD D1, R"); }
+    else if (strcmp(op,"|")==0) { cg_emit(cg, "OR DWORD A, B"); cg_emit(cg, "OR DWORD D1, R"); }
+    else if (strcmp(op,"^")==0) { cg_emit(cg, "XOR DWORD A, B"); cg_emit(cg, "XOR DWORD D1, R"); }
+    else if (strcmp(op,"==")==0 || strcmp(op,"!=")==0 || strcmp(op,"<")==0 ||
+             strcmp(op,"<=")==0 || strcmp(op,">")==0 || strcmp(op,">=")==0) {
+        const char *lt = cg_new_label(cg, "LC");
+        const char *le = cg_new_label(cg, "LC");
+        /* 简化：用高字/低字比较生成 0/1 */
+        /* 相等 */
+        if (strcmp(op,"==")==0 || strcmp(op,"!=")==0) {
+            cg_emit(cg, "MOV C, D1");
+            cg_emit(cg, "CMP DWORD R");
+            cg_emit(cg, "LET E, DWORD %s", strcmp(op,"==")==0 ? le : lt);
+            cg_emit(cg, "JNZ");
+            cg_emit(cg, "MOV C, A");
+            cg_emit(cg, "CMP DWORD B");
+            cg_emit(cg, "LET E, DWORD %s", strcmp(op,"==")==0 ? le : lt);
+            cg_emit(cg, "JNZ");
+        } else {
+            cg_emit(cg, "MOV C, D1");
+            if (strcmp(op,"<")==0 || strcmp(op,"<=")==0) {
+                cg_emit(cg, "LET E, DWORD %s", lt);
+                cg_emit(cg, (uns ? "JB DWORD R" : "JL DWORD R"));
+                cg_emit(cg, "LET E, DWORD %s", le);
+                cg_emit(cg, (uns ? "JA DWORD R" : "JG DWORD R"));
+            } else {
+                cg_emit(cg, "LET E, DWORD %s", lt);
+                cg_emit(cg, (uns ? "JA DWORD R" : "JG DWORD R"));
+                cg_emit(cg, "LET E, DWORD %s", le);
+                cg_emit(cg, (uns ? "JB DWORD R" : "JL DWORD R"));
+            }
+            cg_emit(cg, "MOV C, A");
+            if (strcmp(op,"<")==0) { cg_emit(cg, "LET E, DWORD %s", lt); cg_emit(cg, "JB DWORD B"); }
+            else if (strcmp(op,"<=")==0) { cg_emit(cg, "LET E, DWORD %s", lt); cg_emit(cg, "JNB DWORD B"); }
+            else if (strcmp(op,">")==0) { cg_emit(cg, "LET E, DWORD %s", lt); cg_emit(cg, "JA DWORD B"); }
+            else { cg_emit(cg, "LET E, DWORD %s", lt); cg_emit(cg, "JNA DWORD B"); }
+        }
+        cg_emit(cg, "LET A, DWORD 0");
+        cg_emit(cg, "LET E, DWORD %s", le);
+        cg_emit(cg, "JMP");
+        cg_emit(cg, "%s:", lt);
+        cg_emit(cg, "LET A, DWORD 1");
+        cg_emit(cg, "%s:", le);
+        cg_emit(cg, "ZERO D1");
+    } else {
+        fprintf(stderr, "不支持的 64 位运算: %s\n", op);
+        exit(1);
+    }
 }
 
 static void gen_binop(CodeGen *cg, Expr *e) {
     const char *op = e->op;
+    if (strcmp(op, "&&") != 0 && strcmp(op, "||") != 0 && expr_size(cg, e) == 8) {
+        gen_long_binop(cg, e);
+        return;
+    }
     if (strcmp(op, "&&") == 0) {
         const char *lf = cg_new_label(cg, "AND");
         const char *le = cg_new_label(cg, "AND");
@@ -285,7 +690,7 @@ static void gen_assign(CodeGen *cg, Expr *e) {
     cg_emit(cg, "MOV B, A");
     cg_emit(cg, "POP DWORD A");
     if (strcmp(e->op, "=") == 0) {
-        cg_emit(cg, "ST DWORD *B, A");
+        emit_store_to_b(cg, var_size(cg, e->l));
         return;
     }
     cg_emit(cg, "PUSH DWORD B");
@@ -309,15 +714,73 @@ static void gen_assign(CodeGen *cg, Expr *e) {
     cg_emit(cg, "ST DWORD *B, A");
 }
 
+static int expr_size(CodeGen *cg, Expr *e) {
+    if (!e) return 4;
+    switch (e->kind) {
+        case EXPR_NUM: return e->type_size == 8 ? 8 : 4;
+        case EXPR_VAR: return var_size(cg, e);
+        case EXPR_BIN: {
+            int l = expr_size(cg, e->l), r = expr_size(cg, e->r);
+            return (l == 8 || r == 8) ? 8 : 4;
+        }
+        case EXPR_UNARY: return expr_size(cg, e->r);
+        case EXPR_ASSIGN: return var_size(cg, e->l);
+        case EXPR_INCDEC: return var_size(cg, e->r ? e->r : e->l);
+        default: return 4;
+    }
+}
+
+static int expr_unsigned(CodeGen *cg, Expr *e) {
+    if (!e) return 0;
+    switch (e->kind) {
+        case EXPR_NUM: return e->is_unsigned;
+        case EXPR_VAR: return var_unsigned(cg, e);
+        case EXPR_BIN: {
+            int l = expr_unsigned(cg, e->l), r = expr_unsigned(cg, e->r);
+            int ls = expr_size(cg, e->l), rs = expr_size(cg, e->r);
+            if (ls != rs) return ls > rs ? l : r;
+            return l || r;
+        }
+        case EXPR_UNARY: return expr_unsigned(cg, e->r);
+        case EXPR_ASSIGN: return var_unsigned(cg, e->l);
+        default: return 0;
+    }
+}
+
+static void emit_load_var(CodeGen *cg, Expr *e) {
+    var_addr(cg, e);
+    if (var_size(cg, e) == 8) {
+        cg_emit(cg, "MOV R, A");
+        cg_emit(cg, "LR DWORD A, *R");
+        cg_emit(cg, "ADD DWORD R, 4");
+        cg_emit(cg, "LR DWORD D1, *R");
+    } else {
+        cg_emit(cg, "LR DWORD A, *A");
+    }
+}
+
+static void emit_store_to_b(CodeGen *cg, int size) {
+    if (size == 8) {
+        cg_emit(cg, "ST DWORD *B, A");
+        cg_emit(cg, "MOV R, B");
+        cg_emit(cg, "ADD DWORD R, 4");
+        cg_emit(cg, "ST DWORD *R, D1");
+    } else {
+        cg_emit(cg, "ST DWORD *B, A");
+    }
+}
+
 static void gen_expr(CodeGen *cg, Expr *e) {
     if (!e) return;
     switch (e->kind) {
         case EXPR_NUM:
-            cg_emit(cg, "LET A, DWORD %d", e->ival);
+            cg_emit(cg, "LET A, DWORD %lld", e->ival);
+            if (e->type_size == 8) {
+                cg_emit(cg, "LET D1, DWORD %lld", (long long)((unsigned long long)e->ival >> 32));
+            }
             break;
         case EXPR_VAR:
-            var_addr(cg, e);
-            cg_emit(cg, "LR DWORD A, *A");
+            emit_load_var(cg, e);
             break;
         case EXPR_UNARY:
             gen_expr(cg, e->r);
@@ -377,7 +840,8 @@ static void gen_stmt(CodeGen *cg, Stmt *s) {
         case STMT_RETURN: {
             if (s->expr) {
                 gen_expr(cg, s->expr);
-                cg_emit(cg, "MOV D1, A");
+                if (expr_size(cg, s->expr) != 8)
+                    cg_emit(cg, "MOV D1, A");
             }
             cg_emit(cg, "RER");
             cg_emit(cg, "JMP");
@@ -464,8 +928,12 @@ static void gen_func(CodeGen *cg, Function *f) {
     cg->nlocals = 0;
     cg->nparams = 0;
     int n = f->nparams;
-    for (int i = 0; i < n; i++) {
-        cg_push_param(cg, f->params[i], 3 + 4 * (n - i));
+    int acc = 0;
+    for (int i = n - 1; i >= 0; i--) {
+        int sz = (f->param_sizes && f->param_sizes[i] == 8) ? 8 : 4;
+        acc += sz;
+        cg_push_param(cg, f->params[i], acc + 3, sz,
+                      f->param_unsigned ? f->param_unsigned[i] : 0);
     }
     int frame = 4;
     collect_locals(cg, f->body, f->nbody, &frame);
@@ -478,7 +946,8 @@ static void gen_func(CodeGen *cg, Function *f) {
         cg_emit(cg, "RER");
         cg_emit(cg, "JMP");
     } else {
-        cg_emit(cg, "MOV D1, A");
+        if (f->ret_size != 8)
+            cg_emit(cg, "MOV D1, A");
         cg_emit(cg, "RER");
         cg_emit(cg, "JMP");
     }
@@ -499,8 +968,14 @@ int generate_code(Program *p, const char *outpath, char **err) {
     for (int i = 0; i < p->nglobals; i++) {
         Global *g = &p->globals[i];
         fprintf(out, "var_%s:\n", g->name);
-        fprintf(out, "\tDD %d, %d\n", off, g->has_init ? g->init : 0);
-        off += 4;
+        if (g->type_size == 8) {
+            fprintf(out, "\tDD %d, %d\n", off, g->has_init ? g->init : 0);
+            fprintf(out, "\tDD %d, 0\n", off + 4);
+            off += 8;
+        } else {
+            fprintf(out, "\tDD %d, %d\n", off, g->has_init ? g->init : 0);
+            off += 4;
+        }
     }
     fprintf(out, "\n\tSECTION TEXT\n\tORG 0\n");
     for (int i = 0; i < p->nfuncs; i++) gen_func(&cg, &p->funcs[i]);

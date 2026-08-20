@@ -140,6 +140,8 @@ static Expr *parse_primary(Parser *p) {
     if (t->kind == T_NUM) {
         Expr *e = expr_new(EXPR_NUM);
         e->ival = t->ival;
+        e->type_size = t->is_long ? 8 : 4;
+        e->is_unsigned = t->is_unsigned;
         e->line = t->line;
         return e;
     }
@@ -302,6 +304,7 @@ static Stmt *parse_stmt(Parser *p) {
         Stmt *s = stmt_new(STMT_DECL);
         s->name = xstrdup(name->text);
         s->decl_size = ty.size;
+        s->decl_unsigned = ty.is_unsigned;
         if (accept_op(p, "=")) s->expr = parse_assign(p);
         if (!expect_op(p, ";")) { stmt_free(s); return NULL; }
         return s;
@@ -390,6 +393,8 @@ Program parse_program(TokenArray *ta, char **err) {
             memset(&f, 0, sizeof(f));
             f.name = xstrdup(name->text);
             f.ret_void = ty.is_void;
+            f.ret_size = ty.size;
+            f.ret_unsigned = ty.is_unsigned;
             if (!accept_op(&p, ")")) {
                 if (peek(&p,0)->kind == T_KW && strcmp(peek(&p,0)->text,"void")==0 &&
                     peek(&p,1)->kind == T_OP && strcmp(peek(&p,1)->text,")")==0) {
@@ -401,10 +406,14 @@ Program parse_program(TokenArray *ta, char **err) {
                             snprintf(p.err, sizeof(p.err), "line %d: 期望参数类型", peek(&p,0)->line);
                             break;
                         }
-                        parse_type_spec(&p);
+                        TypeInfo pt = parse_type_spec(&p);
                         Token *pn = expect_kind(&p, T_ID);
                         if (!pn) break;
                         f.params = (char **)realloc(f.params, (size_t)(f.nparams+1)*sizeof(char *));
+                        f.param_sizes = (int *)realloc(f.param_sizes, (size_t)(f.nparams+1)*sizeof(int));
+                        f.param_unsigned = (int *)realloc(f.param_unsigned, (size_t)(f.nparams+1)*sizeof(int));
+                        f.param_sizes[f.nparams] = pt.size;
+                        f.param_unsigned[f.nparams] = pt.is_unsigned;
                         f.params[f.nparams++] = xstrdup(pn->text);
                         if (!accept_op(&p, ",")) break;
                     }
@@ -426,6 +435,7 @@ Program parse_program(TokenArray *ta, char **err) {
             g.has_init = 0;
             g.init = 0;
             g.type_size = ty.size;
+            g.is_unsigned = ty.is_unsigned;
             if (accept_op(&p, "=")) {
                 Token *v = next(&p);
                 if (v->kind != T_NUM) {

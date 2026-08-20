@@ -36,6 +36,8 @@ void program_free(Program *p) {
         free(f->name);
         for (int j = 0; j < f->nparams; j++) free(f->params[j]);
         free(f->params);
+        free(f->param_sizes);
+        free(f->param_unsigned);
         for (int j = 0; j < f->nbody; j++) stmt_free(f->body[j]);
         free(f->body);
     }
