@@ -215,10 +215,14 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	std::string include_dir = DCC_INCLUDE_DIR;
-	if (include_dir.empty())
-		include_dir = dir_name(argv[0]) + "/include";
-	if (const char* env = std::getenv("DCC_INCLUDE")) include_dir = env;	// 环境变量覆盖
+	// 优先使用可执行文件旁的 include 目录，避免仓库移动后编译期绝对路径失效；
+	// 其次使用环境变量 DCC_INCLUDE 覆盖；最后才回退到编译期宏。
+	std::string include_dir = dir_name(argv[0]) + "/include";
+	if (const char* env = std::getenv("DCC_INCLUDE")) {
+		include_dir = env;	// 环境变量覆盖
+	} else if (!file_exists(join_path(include_dir, "stdint.h")) && DCC_INCLUDE_DIR[0]) {
+		include_dir = DCC_INCLUDE_DIR;
+	}
 	// lib 目录：与 include 目录同级（项目根/dcc/lib）
 	std::string lib_dir = include_dir;
 	{
