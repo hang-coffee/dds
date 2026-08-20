@@ -40,6 +40,7 @@ void program_free(Program *p) {
         free(f->param_unsigned);
         free(f->param_float);
         free(f->param_double);
+        free(f->param_const);
         for (int j = 0; j < f->nbody; j++) stmt_free(f->body[j]);
         free(f->body);
     }

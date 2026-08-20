@@ -59,6 +59,7 @@ struct Stmt {
     int decl_unsigned;     /* STMT_DECL */
     int decl_float;         /* STMT_DECL */
     int decl_double;        /* STMT_DECL */
+    int decl_const;         /* STMT_DECL */
     Stmt *next;            /* 未使用，保留 */
 };
 
@@ -77,6 +78,7 @@ typedef struct {
     int ret_double;
     int *param_float;
     int *param_double;
+    int *param_const;
 } Function;
 
 typedef struct {
@@ -87,6 +89,7 @@ typedef struct {
     int is_unsigned;
     int is_float;
     int is_double;
+    int is_const;
 } Global;
 
 typedef struct {

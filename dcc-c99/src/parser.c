@@ -345,6 +345,7 @@ static Stmt *parse_stmt(Parser *p) {
         s->decl_unsigned = ty.is_unsigned;
         s->decl_float = ty.is_float;
         s->decl_double = ty.is_double;
+        s->decl_const = ty.is_const;
         if (accept_op(p, "=")) s->expr = parse_assign(p);
         if (!expect_op(p, ";")) { stmt_free(s); return NULL; }
         return s;
@@ -460,6 +461,8 @@ Program parse_program(TokenArray *ta, char **err) {
                         f.param_double = (int *)realloc(f.param_double, (size_t)(f.nparams+1)*sizeof(int));
                         f.param_float[f.nparams] = pt.is_float;
                         f.param_double[f.nparams] = pt.is_double;
+                        f.param_const = (int *)realloc(f.param_const, (size_t)(f.nparams+1)*sizeof(int));
+                        f.param_const[f.nparams] = pt.is_const;
                         f.params[f.nparams++] = xstrdup(pn->text);
                         if (!accept_op(&p, ",")) break;
                     }
@@ -484,6 +487,7 @@ Program parse_program(TokenArray *ta, char **err) {
             g.is_unsigned = ty.is_unsigned;
             g.is_float = ty.is_float;
             g.is_double = ty.is_double;
+            g.is_const = ty.is_const;
             if (accept_op(&p, "=")) {
                 Token *v = next(&p);
                 if (v->kind != T_NUM) {

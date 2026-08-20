@@ -9,7 +9,7 @@
 - [x] `float` / `double`（基本存储、赋值、四则运算、函数传参/返回）
 - [ ] `long double`
 - [ ] `_Bool`
-- [x] `const`（基础解析支持，暂不实施只读检查）
+- [x] `const`（只读检查已实现：赋值/自增自减/复合赋值均报错）
 - [ ] `volatile` / `restrict`
 - [ ] `struct` / `union` / `enum`
 - [ ] `typedef`

@@ -12,6 +12,7 @@ typedef struct {
     int is_unsigned;
     int is_float;
     int is_double;
+    int is_const;
 } VarInfo;
 
 typedef struct {
@@ -21,6 +22,7 @@ typedef struct {
     int is_unsigned;
     int is_float;
     int is_double;
+    int is_const;
 } ParamInfo;
 
 typedef struct {
@@ -133,10 +135,21 @@ static int var_is_double(CodeGen *cg, Expr *e) {
     return 0;
 }
 
+static int var_is_const(CodeGen *cg, Expr *e) {
+    if (e->kind != EXPR_VAR) return 0;
+    VarInfo *li = local_info(cg, e->name);
+    if (li) return li->is_const;
+    ParamInfo *pi = param_info(cg, e->name);
+    if (pi) return pi->is_const;
+    Global *g = global_info(cg->prog, e->name);
+    if (g) return g->is_const;
+    return 0;
+}
+
 static int expr_size(CodeGen *cg, Expr *e);
 static int expr_unsigned(CodeGen *cg, Expr *e);
 
-static void cg_push_local(CodeGen *cg, const char *name, int offset, int size, int is_unsigned, int is_float, int is_double) {
+static void cg_push_local(CodeGen *cg, const char *name, int offset, int size, int is_unsigned, int is_float, int is_double, int is_const) {
     if (cg->nlocals >= cg->caplocals) {
         cg->caplocals = cg->caplocals ? cg->caplocals * 2 : 16;
         cg->locals = (VarInfo *)realloc(cg->locals, (size_t)cg->caplocals * sizeof(VarInfo));
@@ -147,6 +160,7 @@ static void cg_push_local(CodeGen *cg, const char *name, int offset, int size, i
     cg->locals[cg->nlocals].is_unsigned = is_unsigned;
     cg->locals[cg->nlocals].is_float = is_float;
     cg->locals[cg->nlocals].is_double = is_double;
+    cg->locals[cg->nlocals].is_const = is_const;
     cg->nlocals++;
 }
 
@@ -162,7 +176,7 @@ static VarInfo *local_info(CodeGen *cg, const char *name) {
     return NULL;
 }
 
-static void cg_push_param(CodeGen *cg, const char *name, int offset, int size, int is_unsigned, int is_float, int is_double) {
+static void cg_push_param(CodeGen *cg, const char *name, int offset, int size, int is_unsigned, int is_float, int is_double, int is_const) {
     if (cg->nparams >= cg->capparams) {
         cg->capparams = cg->capparams ? cg->capparams * 2 : 8;
         cg->params = (ParamInfo *)realloc(cg->params, (size_t)cg->capparams * sizeof(ParamInfo));
@@ -173,6 +187,7 @@ static void cg_push_param(CodeGen *cg, const char *name, int offset, int size, i
     cg->params[cg->nparams].is_unsigned = is_unsigned;
     cg->params[cg->nparams].is_float = is_float;
     cg->params[cg->nparams].is_double = is_double;
+    cg->params[cg->nparams].is_const = is_const;
     cg->nparams++;
 }
 
@@ -214,7 +229,7 @@ static void collect_locals(CodeGen *cg, Stmt **stmts, int n, int *frame) {
         Stmt *s = stmts[i];
         if (s->kind == STMT_DECL) {
             int sz = s->decl_size > 0 ? s->decl_size : 4;
-            cg_push_local(cg, s->name, *frame, sz, s->decl_unsigned, s->decl_float, s->decl_double);
+            cg_push_local(cg, s->name, *frame, sz, s->decl_unsigned, s->decl_float, s->decl_double, s->decl_const);
             *frame += sz;
         } else if (s->kind == STMT_BLOCK) {
             collect_locals(cg, s->items, s->nitems, frame);
@@ -249,6 +264,10 @@ static void var_addr(CodeGen *cg, Expr *e) {
 
 static void gen_incdec(CodeGen *cg, Expr *e, int postfix) {
     Expr *target = e->r ? e->r : e->l;
+    if (var_is_const(cg, target)) {
+        fprintf(stderr, "line %d: 不能修改 const 变量 %s\n", target->line, target->name ? target->name : "?");
+        exit(1);
+    }
     var_addr(cg, target);
     cg_emit(cg, "MOV B, A");
     emit_load_from_b(cg, var_size(cg, target), var_unsigned(cg, target));
@@ -878,6 +897,10 @@ static void gen_binop(CodeGen *cg, Expr *e) {
 }
 
 static void gen_assign(CodeGen *cg, Expr *e) {
+    if (var_is_const(cg, e->l)) {
+        fprintf(stderr, "line %d: 不能修改 const 变量 %s\n", e->l->line, e->l->name ? e->l->name : "?");
+        exit(1);
+    }
     gen_expr(cg, e->r);
     if (var_is_float(cg, e->l)) {
         emit_conv_to_float(cg, e->r);
@@ -1258,7 +1281,8 @@ static void gen_func(CodeGen *cg, Function *f) {
         cg_push_param(cg, f->params[i], acc + 3, sz,
                       f->param_unsigned ? f->param_unsigned[i] : 0,
                       f->param_float ? f->param_float[i] : 0,
-                      f->param_double ? f->param_double[i] : 0);
+                      f->param_double ? f->param_double[i] : 0,
+                      f->param_const ? f->param_const[i] : 0);
     }
     int frame = 4;
     collect_locals(cg, f->body, f->nbody, &frame);
