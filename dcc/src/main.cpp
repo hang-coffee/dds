@@ -92,57 +92,69 @@ std::string default_out_path(const std::string& in) {
 // 返回 false 表示有错误（errs 收集）
 static bool merge_programs(std::vector<dcc::Program>& progs, dcc::Program& out,
                            std::vector<std::string>& errs) {
-	std::unordered_map<std::string, int> defined_globals;	// name → out.globals 索引
-	std::unordered_map<std::string, int> defined_funcs;		// name → out.funcs 索引
-	std::vector<std::string> extern_globals;				// 仅 extern 声明（无定义者）
+std::unordered_map<std::string, int> defined_globals;// 唯一键 → out.globals 索引
+std::unordered_map<std::string, int> defined_funcs;// 唯一键 → out.funcs 索引
+std::vector<std::string> extern_globals;// 仅 extern 声明（无定义者）
 
-	for (dcc::Program& p : progs) {
-		for (dcc::GlobalVar& g : p.globals) {
-			if (g.is_extern) {
-				if (!defined_globals.count(g.name)) extern_globals.push_back(g.name);
-				continue;
-			}
-			if (defined_globals.count(g.name)) {
-				errs.push_back("全局变量重复定义: " + g.name);
-				return false;
-			}
-			defined_globals[g.name] = (int)out.globals.size();
-			out.globals.push_back(std::move(g));
-		}
-		for (dcc::Function& f : p.funcs) {
-			if (f.is_decl) {
-				// 原型：若尚无定义则保留（供函数表登记）；已有定义则忽略
-				if (!defined_funcs.count(f.name)) {
-					defined_funcs[f.name] = (int)out.funcs.size();
-					out.funcs.push_back(std::move(f));
-				}
-				continue;
-			}
-			// 定义：若已有同名 → 若之前是原型则替换为定义；若是定义则冲突
-			auto it = defined_funcs.find(f.name);
-			if (it != defined_funcs.end()) {
-				if (out.funcs[it->second].is_decl) {
-					// 原型 → 定义：继承原型的 __interrupt__ 标记
-					bool isr = out.funcs[it->second].is_isr;
-					out.funcs[it->second] = std::move(f);
-					out.funcs[it->second].is_isr = isr;
-					continue;
-				}
-				errs.push_back("函数重复定义: " + f.name);
-				return false;
-			}
-			defined_funcs[f.name] = (int)out.funcs.size();
-			out.funcs.push_back(std::move(f));
-		}
-	}
-	// extern 变量必须有定义
-	for (const std::string& n : extern_globals) {
-		if (!defined_globals.count(n)) {
-			errs.push_back("extern 变量未定义: " + n);
-			return false;
-		}
-	}
-	return true;
+auto global_key = [](const dcc::GlobalVar& g) -> std::string {
+if (g.is_static) return "static:" + g.file_id + ":" + g.name;
+return g.name;
+};
+auto func_key = [](const dcc::Function& f) -> std::string {
+if (f.is_static) return "static:" + f.file_id + ":" + f.name;
+return f.name;
+};
+
+for (dcc::Program& p : progs) {
+for (dcc::GlobalVar& g : p.globals) {
+if (g.is_extern) {
+// extern 只解析到非 static 定义
+if (!defined_globals.count(g.name)) extern_globals.push_back(g.name);
+continue;
+}
+std::string key = global_key(g);
+if (defined_globals.count(key)) {
+errs.push_back("全局变量重复定义: " + g.name);
+return false;
+}
+defined_globals[key] = (int)out.globals.size();
+out.globals.push_back(std::move(g));
+}
+for (dcc::Function& f : p.funcs) {
+std::string key = func_key(f);
+if (f.is_decl) {
+// 原型：若尚无定义则保留（供函数表登记）；已有定义则忽略
+if (!defined_funcs.count(key)) {
+defined_funcs[key] = (int)out.funcs.size();
+out.funcs.push_back(std::move(f));
+}
+continue;
+}
+// 定义：若已有同名 → 若之前是原型则替换为定义；若是定义则冲突
+auto it = defined_funcs.find(key);
+if (it != defined_funcs.end()) {
+if (out.funcs[it->second].is_decl) {
+// 原型 → 定义：继承原型的 __interrupt__ 标记
+bool isr = out.funcs[it->second].is_isr;
+out.funcs[it->second] = std::move(f);
+out.funcs[it->second].is_isr = isr;
+continue;
+}
+errs.push_back("函数重复定义: " + f.name);
+return false;
+}
+defined_funcs[key] = (int)out.funcs.size();
+out.funcs.push_back(std::move(f));
+}
+}
+// extern 变量必须有非 static 定义
+for (const std::string& n : extern_globals) {
+if (!defined_globals.count(n)) {
+errs.push_back("extern 变量未定义: " + n);
+return false;
+}
+}
+return true;
 }
 
 int main(int argc, char** argv) {
@@ -279,6 +291,11 @@ int main(int argc, char** argv) {
 			std::fprintf(stderr, "dcc: 语法分析失败: %s\n", path.c_str());
 			return false;
 		}
+		// 为 static 符号记录所属编译单元，便于生成唯一的内部链接符号
+		for (auto& g : prog.globals)
+			if (g.is_static) g.file_id = base;
+		for (auto& f : prog.funcs)
+			if (f.is_static) f.file_id = base;
 		progs.push_back(std::move(prog));
 		return true;
 	};

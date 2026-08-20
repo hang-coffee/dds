@@ -5,6 +5,8 @@
 SECTION TEXT
 ORG 0
 
+EXTERN func_main
+
 _start:
 LET E, DWORD func_main
 JMP

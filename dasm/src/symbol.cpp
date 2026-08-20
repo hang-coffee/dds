@@ -46,6 +46,15 @@ bool symbol_add_label(symbol_table& symtab, const std::string& name) {
     // 检查是否已存在
     auto it = symtab.symbols.find(name);
     if (it != symtab.symbols.end()) {
+        // EXTERN 声明后在同一文件内给出定义：将外部声明提升为本地定义
+        if (it->second.external) {
+            it->second.external = false;
+            it->second.segment = symtab.current_segment;
+            it->second.resolved = true;
+            if (symtab.current_segment == SEG_TEXT) it->second.address = symtab.text_offset;
+            else it->second.address = symtab.data_offset;
+            return true;
+        }
         symtab.errors.push_back("标号重复定义: " + name);
         return false;
     }

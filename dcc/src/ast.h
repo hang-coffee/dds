@@ -213,6 +213,7 @@ struct VarDecl {
 	Expr *init;				// 初始化器（标量）
 	std::string str_init;	// 字符串初始化（char 数组）
 	bool has_str_init;
+	bool is_static;			// static 局部变量（静态存储期）
 };
 
 struct Stmt {
@@ -246,6 +247,8 @@ struct Function {
 	bool is_isr;				// __interrupt__ 中断服务函数（return → IRET）
 	bool is_inline;				// inline 函数（可内联优化）
 	bool is_vararg;				// 可变参数函数（...）
+	bool is_static;			// static 函数（内部链接）
+	std::string file_id;		// 所属编译单元标识（static 符号用于唯一命名）
 };
 
 // ---- 全局变量 ----
@@ -262,6 +265,8 @@ struct GlobalVar {
 	int offset;					// data 区偏移（codegen 填充）
 	std::string label;			// var_<name>
 	bool is_extern;				// extern 声明（不分配存储，由其它编译单元定义）
+	bool is_static;			// static 全局变量（内部链接）
+	std::string file_id;		// 所属编译单元标识（static 符号用于唯一命名）
 };
 
 // ---- 程序（顶层）：全局变量 + 函数 ----

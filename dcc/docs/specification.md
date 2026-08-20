@@ -389,6 +389,7 @@ int main(void) { return add(g_count, 2); }
 | 寄存器访问 | `__reg_A` 等扩展（非 ANSI） |
 | 指针与整数隐式互转 | 不检查（v0.2 无转换检查） |
 | `extern`/函数原型 | 支持（多文件分离编译，`dcc a.c b.c out.asm`） |
+| `static` | 支持文件内 static 函数/变量（内部链接）与函数内 static 局部变量（静态存储期） |
 | GNU 内联汇编 | 支持 `__asm__`（无操作数约束） |
 | `switch`/`do-while`/`goto` | 不支持 |
 | 多字节/宽字符 | 不支持 |

@@ -23,6 +23,7 @@ private:
 	SymTable symtab_;			// 全局+局部作用域符号
 	std::unordered_map<std::string, Function*> funcs_;	// 函数表（解析用）
 	std::unordered_map<std::string, Type> func_ret_;	// 返回值类型
+	std::unordered_map<std::string, std::string> func_label_map_;	// 原函数名 → 实际输出标号
 
 	std::string text_;			// TEXT 段输出
 	std::string data_;			// DATA 段输出
@@ -49,6 +50,7 @@ private:
 	// 顶层
 	void gen_global(GlobalVar& g);
 	void gen_func(Function& f);
+	std::string func_label(const std::string& name) const;	// 函数原名的实际输出标号
 	void gen_start();
 	void emit_str_data(const std::string& label, const std::string& s);	// 每字节一行 DB
 

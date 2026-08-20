@@ -98,14 +98,15 @@ std::string CodeGen::generate(Program& prog, const TypeEnv& env) {
 	data_.clear();
 
 	// 函数表（用于调用解析）
+	func_label_map_.clear();
 	for (Function& f : prog.funcs) {
-		funcs_["func_" + f.name] = &f;
+		std::string actual = "func_" + (f.is_static ? f.file_id + "__" + f.name : f.name);
+		func_label_map_["func_" + f.name] = actual;
+		funcs_[actual] = &f;
 		func_ret_["func_" + f.name] = f.ret_type;
 	}
-
-	// 全局变量 → DATA
 	for (GlobalVar& g : prog.globals) {
-		g.label = "var_" + g.name;
+		g.label = "var_" + (g.is_static ? g.file_id + "__" + g.name : g.name);
 		if (g.is_extern) {
 			// extern 声明：不分配存储；登记符号（label 指向定义者，
 			// 若最终无定义则 dasm 报未定义标号）
@@ -228,10 +229,16 @@ void CodeGen::gen_global(GlobalVar& g) {
 	}
 }
 
+std::string CodeGen::func_label(const std::string& name) const {
+auto it = func_label_map_.find("func_" + name);
+if (it != func_label_map_.end()) return it->second;
+return "func_" + name;
+}
+
 void CodeGen::gen_func(Function& f) {
 	// 函数原型：仅登记函数表（generate 已做），不生成代码
 	if (f.is_decl) return;
-	cur_func_ = "func_" + f.name;
+	cur_func_ = func_label(f.name);
 	cur_isr_ = f.is_isr;	// ISR：return → MOV S,F + IRET
 	// 注意：不重置 label_cnt_，保证全程序标号唯一
 	symtab_.push_scope();
@@ -244,6 +251,48 @@ void CodeGen::gen_func(Function& f) {
 			if (st->kind == S_DECL) {
 				for (Stmt* d = st; d; d = d->next) {
 					VarDecl& dd = d->decl;
+					if (dd.is_static) {
+						// static 局部变量：静态存储期，分配在 DATA 段，只初始化一次
+						std::string label = "var_static_" + std::to_string(label_cnt_++);
+						GlobalVar gv;
+						gv.name = dd.name;
+						gv.type = dd.type;
+						gv.is_array = dd.is_array;
+						gv.array_len = dd.array_len;
+						gv.has_init = dd.init != nullptr;
+						gv.label_init.clear();
+						gv.has_str_init = dd.has_str_init;
+						gv.str_init = dd.str_init;
+						gv.offset = data_off_;
+						gv.label = label;
+						gv.is_extern = false;
+						gv.is_static = true;
+						if (dd.init && dd.init->kind == E_INT) {
+							gv.ival_init = dd.init->ival;
+						} else if (dd.init && dd.init->kind == E_FLOAT) {
+							float fv = (float)dd.init->fval;
+							uint32_t bits;
+							memcpy(&bits, &fv, sizeof(bits));
+							gv.ival_init = bits;
+						} else if (dd.init && dd.init->kind == E_STR) {
+							gv.has_str_init = true;
+							gv.str_init = dd.init->name;
+						}
+						gen_global(gv);
+						Symbol sym;
+						sym.name = dd.name;
+						sym.type = dd.type;
+						sym.is_array = dd.is_array;
+						sym.array_len = dd.array_len;
+						sym.is_global = true;
+						sym.is_arg = false;
+						sym.offset = (uint32_t)gv.offset;
+						sym.label = gv.label;
+						if (!symtab_.declare(sym)) {
+							error("函数 '" + f.name + "' 中变量重复声明: " + dd.name);
+						}
+						continue;
+					}
 					int size = dd.is_array ? dd.array_len * tsize(dd.type)
 					                       : tsize(dd.type);
 					Symbol sym;
@@ -504,6 +553,8 @@ void CodeGen::gen_stmt(Stmt* s) {
 // 局部变量声明：标量初始化/数组字符串初始化生成赋值代码
 void CodeGen::gen_decl(Stmt* s) {
 	VarDecl& d = s->decl;
+	// static 局部变量已在 DATA 段分配并初始化，函数内不需要再生成赋值代码
+	if (d.is_static) return;
 	if (!d.is_array) {
 		if (d.init) {
 			// x = init;（含 char *p = "abc"：E_STR 生成地址）
@@ -865,7 +916,7 @@ void CodeGen::gen_lvalue_addr(Expr* e) {
 		const Symbol* s = symtab_.lookup(e->name);
 		if (!s) {
 			// 函数名作为函数地址：&foo / (unsigned)foo 等
-			if (funcs_.count("func_" + e->name)) {
+			if (funcs_.count(func_label(e->name))) {
 				emit_t("LET B, DWORD func_" + e->name);
 				return;
 			}
@@ -975,7 +1026,7 @@ void CodeGen::gen_expr(Expr* e) {
 			const Symbol* s = symtab_.lookup(e->name);
 			if (!s) {
 				// 函数名作为函数地址（如 unsigned int a = foo;）
-				if (funcs_.count("func_" + e->name)) {
+				if (funcs_.count(func_label(e->name))) {
 					emit_t("LET A, DWORD func_" + e->name);
 					break;
 				}
@@ -1635,16 +1686,16 @@ Type fp_type;
 
 // 直接函数调用：foo(...)。函数名不是变量，且存在于函数表。
 if (callee && callee->kind == E_VAR && !symtab_.lookup(callee->name)) {
-if (funcs_.count("func_" + callee->name)) {
+if (funcs_.count(func_label(callee->name))) {
 direct_name = callee->name;
-auto fit = funcs_.find("func_" + direct_name);
+auto fit = funcs_.find(func_label(direct_name));
 if (fit != funcs_.end()) fn = fit->second;
 } else {
 error("未定义函数: " + callee->name);
 }
-} else if (!callee && funcs_.count("func_" + e->name)) {
+} else if (!callee && funcs_.count(func_label(e->name))) {
 direct_name = e->name;
-auto fit = funcs_.find("func_" + direct_name);
+auto fit = funcs_.find(func_label(direct_name));
 if (fit != funcs_.end()) fn = fit->second;
 } else {
 // 间接调用：函数指针表达式(...)。
@@ -1735,7 +1786,7 @@ emit_t("LET E, DWORD " + ret);
 emit_t("PUSH DWORD E");
 // 跳转
 if (!direct_name.empty()) {
-std::string fn2 = "func_" + direct_name;
+std::string fn2 = func_label(direct_name);
 if (funcs_.find(fn2) == funcs_.end()) error("未定义函数: " + direct_name);
 emit_t("LET E, DWORD " + fn2);
 } else {

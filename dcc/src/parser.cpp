@@ -428,8 +428,9 @@ void Parser::parse_func_ptr_params(Type& t) {
 }
 
 void Parser::parse_global(Program& prog) {
-	// static：暂不实现内部链接，仅接受并忽略
-	if (is(TOK_STATIC)) advance();
+	// static：文件作用域内部链接
+	bool is_static = false;
+	if (is(TOK_STATIC)) { advance(); is_static = true; }
 	// inline：记录标记，用于内联优化
 	bool is_inline = false;
 	if (is(TOK_INLINE)) { advance(); is_inline = true; }
@@ -464,6 +465,7 @@ void Parser::parse_global(Program& prog) {
 		fn.is_isr = false;
 		fn.is_inline = is_inline;
 		fn.is_vararg = false;
+		fn.is_static = is_static;
 		if (is(TOK_VOID) && at(1).kind == TOK_RPAREN) {	// (void)：空参数列表
 			advance();
 			if (!expect(TOK_RPAREN, "')'")) return;
@@ -526,6 +528,7 @@ void Parser::parse_global(Program& prog) {
 		gv.label = "var_" + name;
 		gv.name = name;
 		gv.is_extern = is_extern;
+		gv.is_static = is_static;
 
 		if (is(TOK_LBRACKET)) {	// 数组
 			advance();
@@ -634,6 +637,7 @@ VarDecl Parser::parse_var_decl(Type t, const std::string& name) {
 	d.array_len = 0;
 	d.init = nullptr;
 	d.has_str_init = false;
+	d.is_static = false;
 	if (is(TOK_LBRACKET)) {
 		advance();
 		if (!is(TOK_NUMBER)) { error("期望数组长度", peek()); return d; }
@@ -720,9 +724,10 @@ Stmt* Parser::parse_stmt() {
 		return s;
 	}
 	if (is(TOK_ASM)) return parse_asm();
+	bool local_static = false;
 	if (is(TOK_STATIC)) {
 		advance();
-		// static 局部变量暂按普通局部变量处理（不实现静态存储期）
+		local_static = true;
 	}
 	if (is(TOK_INT) || is(TOK_SHORT) || is(TOK_LONG) || is(TOK_FLOAT) || is(TOK_DOUBLE) || is(TOK_CHAR) || is(TOK_BOOL) || is(TOK_VOID) || is(TOK_SIGNED) || is(TOK_UNSIGNED) || is(TOK_CONST) ||
 	    is(TOK_STRUCT) || is(TOK_UNION) || is(TOK_ENUM) || is(TOK_TYPEDEF) ||
@@ -737,7 +742,7 @@ Stmt* Parser::parse_stmt() {
 		Type t = base;
 		std::string nm;
 		if (!parse_declarator(t, nm)) return nullptr;
-		return parse_decl_stmt(base, t, nm);
+		return parse_decl_stmt(base, t, nm, local_static);
 	}
 	// 表达式语句
 	Stmt* s = new Stmt;
@@ -747,7 +752,7 @@ Stmt* Parser::parse_stmt() {
 	return s;
 }
 
-Stmt* Parser::parse_decl_stmt(Type base, Type t, const std::string& name) {
+Stmt* Parser::parse_decl_stmt(Type base, Type t, const std::string& name, bool is_static) {
 	// 支持逗号分隔的多变量声明：int a, b, c; 或 int *p, *q;
 	// 每个变量生成一个 S_DECL 语句，用 next 链接（codegen 按顺序处理）
 	Stmt* first = nullptr;
@@ -756,6 +761,7 @@ Stmt* Parser::parse_decl_stmt(Type base, Type t, const std::string& name) {
 	std::string nm = name;
 	for (;;) {
 		VarDecl d = parse_var_decl(cur_t, nm);
+		d.is_static = is_static;
 		var_types_[d.name] = d.type;	// 记录局部变量类型（成员访问解析用）
 		var_array_len_[d.name] = d.is_array ? d.array_len : 0;	// sizeof 用
 		Stmt* s = new Stmt;
@@ -840,7 +846,7 @@ Stmt* Parser::parse_for() {
 		Type t = base;
 		std::string nm;
 		if (!parse_declarator(t, nm)) { delete s; return nullptr; }
-		s->init_stmt = parse_decl_stmt(base, t, nm);
+		s->init_stmt = parse_decl_stmt(base, t, nm, false);
 		if (!s->init_stmt) { delete s; return nullptr; }
 		// parse_decl_stmt 已经消费了 for 的第一个 ';'
 	} else {

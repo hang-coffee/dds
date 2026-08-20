@@ -54,7 +54,7 @@ private:
 	// 语句
 	Stmt* parse_stmt();
 	Stmt* parse_block();
-	Stmt* parse_decl_stmt(Type base, Type t, const std::string& name);
+	Stmt* parse_decl_stmt(Type base, Type t, const std::string& name, bool is_static = false);
 	VarDecl parse_var_decl(Type t, const std::string& name);
 	Stmt* parse_asm();				// __asm__("dasmasm");
 	Stmt* parse_if();

@@ -9,7 +9,7 @@ EXTERN func_main
 
 _start:
 LET S, DWORD 0x300000
-MOV A, F
+MOV DWORD A, F
 PUSH DWORD A
 LET E, DWORD _crt_ret0
 PUSH DWORD E
