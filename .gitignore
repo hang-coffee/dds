@@ -11,7 +11,6 @@ build/
 /dasm/dasm
 /dasm/dasm_test
 /dcc/dcc
-/dcc-c99/dcc-c99
 /dlinker/dlinker
 /dda/dda
 

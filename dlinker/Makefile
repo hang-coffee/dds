@@ -1,15 +1,15 @@
-# Makefile - dlinker：DOCTOR 最小链接器
-CXX      ?= g++
-CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
+# Makefile - dlinker：DOCTOR 最小链接器（C99 实现）
+CC       ?= gcc
+CFLAGS   ?= -std=c99 -O2 -Wall -Wextra
 TARGET   := dlinker
-SRC      := src/main.cpp
-OBJ      := $(SRC:.cpp=.o)
+SRC      := src/main.c
+OBJ      := $(SRC:.c=.o)
 
 $(TARGET): $(OBJ)
-	$(CXX) $(CXXFLAGS) -o $@ $(OBJ)
+	$(CC) $(CFLAGS) -o $@ $(OBJ)
 
-%.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+%.o: %.c
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 test: $(TARGET)
 	sh tests/run_dlinker_test.sh

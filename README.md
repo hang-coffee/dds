@@ -12,7 +12,7 @@ DOCTOR 是一个低端教学/实验用指令集架构。本仓库包含：
 - **dcc**：DOCTOR C 子集编译器（C99 重写版）
   - 支持输出 dasm 汇编、ELF32 目标文件、二进制
   - 提供 `lib/`、`docs/`、`tests/`
-- **dlinker**：DOCTOR 最小链接器
+- **dlinker**：DOCTOR 最小链接器（C99 重写版）
   - 链接多个 ELF32 `.o`，生成 `*_code.bin` / `*_data.bin`
 - **dda**：DOCTOR ELF 反汇编器
   - 将 ELF32 `.o` 反汇编为 DASM 汇编文本

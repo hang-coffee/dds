@@ -1,6 +1,6 @@
-# dlinker - DOCTOR 最小链接器
+# dlinker - DOCTOR 最小链接器（C99 实现）
 
-`dlinker` 是一个最小的 DOCTOR 链接器，用于把 `dasm -m elf` 生成的多个 ELF32 relocatable `.o` 文件链接成 DOCTOR 可加载的二进制文件。
+`dlinker` 是一个最小的 DOCTOR 链接器，用于把 `dasm -m elf` 生成的多个 ELF32 relocatable `.o` 文件链接成 DOCTOR 可加载的二进制文件。当前实现使用标准 C99 编写，不依赖 C++ 或 GNU 扩展。
 
 ## 构建
 
@@ -9,6 +9,8 @@ make
 ```
 
 生成 `./dlinker`。
+
+依赖：C99 编译器（gcc/clang）。
 
 ## 用法
 
@@ -44,6 +46,8 @@ make
 ## 测试
 
 ```sh
+make test
+# 或
 sh tests/run_dlinker_test.sh
 ```
 
