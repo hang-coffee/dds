@@ -264,6 +264,8 @@ struct imm_expr {
     bool valid;
     std::vector<const token*> terms;   // 项（IMMEDIATE / LABEL_REF / DOLLAR）
     std::vector<char> ops;             // ops[i] 是 terms[i+1] 前的运算符
+    bool has_extern;                   // 表达式中是否引用了 EXTERN 符号
+    std::string extern_name;           // 引用的外部符号名（仅单个外部符号）
 };
 
 // 一个已解析的操作数
@@ -277,6 +279,8 @@ struct parsed_operand {
     imm_expr imm_ex;         // 立即数表达式
     int64_t imm_value;       // 立即数表达式求值结果
     bool is_string;          // 字符串立即数
+    bool has_extern;         // 立即数表达式中是否引用了 EXTERN 符号
+    std::string extern_name; // 引用的外部符号名
 };
 
 static bool imm_expr_term(parser_context& ctx, const token*& tok) {
@@ -293,6 +297,8 @@ static bool parse_imm_expr(parser_context& ctx, imm_expr& out) {
     out.terms.clear();
     out.ops.clear();
     out.valid = false;
+    out.has_extern = false;
+    out.extern_name.clear();
     const token* t = nullptr;
     if (!imm_expr_term(ctx, t)) return false;
     out.terms.push_back(t);
@@ -316,9 +322,11 @@ static bool parse_imm_expr(parser_context& ctx, imm_expr& out) {
     return true;
 }
 
-static bool eval_imm_expr(parser_context& ctx, const imm_expr& expr, int64_t& value) {
+static bool eval_imm_expr(parser_context& ctx, imm_expr& expr, int64_t& value) {
     if (!expr.valid) return false;
     value = 0;
+    expr.has_extern = false;
+    expr.extern_name.clear();
     for (size_t i = 0; i < expr.terms.size(); i++) {
         const token* t = expr.terms[i];
         int64_t term = 0;
@@ -332,7 +340,14 @@ static bool eval_imm_expr(parser_context& ctx, const imm_expr& expr, int64_t& va
                 parser_error(ctx, "未定义标号: " + t->text);
                 return false;
             }
-            term = static_cast<int64_t>(sym->address);
+            if (sym->external) {
+                // EXTERN 符号：地址在链接期决定，这里先按 0 占位
+                expr.has_extern = true;
+                expr.extern_name = t->text;
+                term = 0;
+            } else {
+                term = static_cast<int64_t>(sym->address);
+            }
         }
         if (i == 0) value = term;
         else value += (expr.ops[i - 1] == '+') ? term : -term;
@@ -362,6 +377,8 @@ static bool parse_operand(parser_context& ctx, parsed_operand& out) {
     out.imm_ex.valid = false;
     out.imm_value = 0;
     out.is_string = false;
+    out.has_extern = false;
+    out.extern_name.clear();
 
     const token* tok = parser_peek(ctx);
     if (!tok) return false;
@@ -408,6 +425,8 @@ static bool parse_operand(parser_context& ctx, parsed_operand& out) {
         out.tok = out.imm_ex.terms.empty() ? nullptr : out.imm_ex.terms[0];
         out.is_imm = true;
         out.imm_value = v;
+        out.has_extern = out.imm_ex.has_extern;
+        out.extern_name = out.imm_ex.extern_name;
         return true;
     }
 
@@ -743,6 +762,21 @@ static bool parse_pseudo_pass1(parser_context& ctx) {
         return true;
     }
 
+    if (tok->type == TOK_PSEUDO_EXTERN) {
+        parser_consume(ctx);
+        tok = parser_peek(ctx);
+        if (!tok || tok->type != TOK_LABEL_REF) {
+            parser_error(ctx, "EXTERN 后需要标号");
+            return false;
+        }
+        if (!symbol_add_extern(*ctx.symtab, tok->text)) {
+            parser_error(ctx, "EXTERN 声明失败: " + tok->text);
+            return false;
+        }
+        parser_consume(ctx);
+        return true;
+    }
+
     parser_error(ctx, "未知伪指令");
     return false;
 }
@@ -766,7 +800,7 @@ bool parser_pass1(parser_context& ctx) {
             continue;
         }
 
-        if (tok->type >= TOK_PSEUDO_SECTION && tok->type <= TOK_PSEUDO_RESB) {
+        if (tok->type >= TOK_PSEUDO_SECTION && tok->type <= TOK_PSEUDO_EXTERN) {
             if (!parse_pseudo_pass1(ctx)) return false;
             continue;
         }
@@ -802,7 +836,7 @@ bool parser_pass2(parser_context& ctx) {
         }
 
         // 伪指令
-        if (tok->type >= TOK_PSEUDO_SECTION && tok->type <= TOK_PSEUDO_RESB) {
+        if (tok->type >= TOK_PSEUDO_SECTION && tok->type <= TOK_PSEUDO_EXTERN) {
             if (tok->type == TOK_PSEUDO_SECTION) {
                 parser_consume(ctx);
                 tok = parser_peek(ctx);
@@ -877,6 +911,14 @@ bool parser_pass2(parser_context& ctx) {
                     imm_expr dv;
                     int64_t dv_value = 0;
                     if (!parse_imm_expr_value(ctx, dv, dv_value, true)) return false;
+                    if (dv.has_extern) {
+                        if (bytes != 1 && bytes != 2 && bytes != 4) {
+                            parser_error(ctx, "EXTERN 符号仅支持 1/2/4 字节数据字段");
+                            return false;
+                        }
+                        generator_add_relocation(*ctx.gen, dv.extern_name, addr,
+                                                 ctx.gen->current_segment, bytes);
+                    }
                     generator_pad_to(*ctx.gen, addr);
                     generator_emit_immediate(*ctx.gen, static_cast<uint32_t>(dv_value), bytes);
                     symbol_advance(*ctx.symtab, (addr - cur) + bytes);
@@ -899,6 +941,17 @@ bool parser_pass2(parser_context& ctx) {
                 uint32_t num = static_cast<uint32_t>(v);
                 generator_emit_reserve(*ctx.gen, num);
                 symbol_advance(*ctx.symtab, num);
+                continue;
+            }
+
+            if (tok->type == TOK_PSEUDO_EXTERN) {
+                parser_consume(ctx);
+                tok = parser_peek(ctx);
+                if (!tok || tok->type != TOK_LABEL_REF) {
+                    parser_error(ctx, "EXTERN 后需要标号");
+                    return false;
+                }
+                parser_consume(ctx);
                 continue;
             }
 
@@ -1031,6 +1084,23 @@ bool parser_pass2(parser_context& ctx) {
             if (!result.success) {
                 parser_error(ctx, result.error_msg);
                 return false;
+            }
+
+            // EXTERN 引用：在立即数字段上生成 ELF 重定位
+            if (op1.has_extern || op2.has_extern) {
+                if (op1.has_extern && op2.has_extern) {
+                    parser_error(ctx, "一条指令中不能同时引用两个 EXTERN 符号");
+                    return false;
+                }
+                if (size_bytes != 1 && size_bytes != 2 && size_bytes != 4) {
+                    parser_error(ctx, "EXTERN 符号仅支持 1/2/4 字节立即数");
+                    return false;
+                }
+                const std::string& ext_name = op1.has_extern ? op1.extern_name : op2.extern_name;
+                uint32_t imm_start = static_cast<uint32_t>(result.bytes.size() - size_bytes);
+                uint32_t reloc_off = symbol_get_current_address(*ctx.symtab) + imm_start;
+                generator_add_relocation(*ctx.gen, ext_name, reloc_off,
+                                         ctx.gen->current_segment, size_bytes);
             }
 
             generator_emit_bytes(*ctx.gen, result.bytes.data(), result.bytes.size());

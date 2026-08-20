@@ -119,6 +119,7 @@ enum token_type {
     TOK_PSEUDO_DQ,
     TOK_PSEUDO_ORG,
     TOK_PSEUDO_RESB,
+    TOK_PSEUDO_EXTERN,
 
     TOK_SIZE_BYTE,
     TOK_SIZE_WORD,

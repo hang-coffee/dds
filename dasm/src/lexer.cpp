@@ -92,6 +92,7 @@ static const std::unordered_map<std::string, token_type> pseudo_map = {
     {"section", TOK_PSEUDO_SECTION}, {"org", TOK_PSEUDO_ORG},
     {"db", TOK_PSEUDO_DB}, {"dw", TOK_PSEUDO_DW}, {"dd", TOK_PSEUDO_DD},
     {"dq", TOK_PSEUDO_DQ}, {"resb", TOK_PSEUDO_RESB},
+    {"extern", TOK_PSEUDO_EXTERN},
 };
 
 static const std::unordered_map<std::string, token_type> prefix_map = {

@@ -19,6 +19,7 @@ make
 - 默认输出 `code.bin` / `data.bin`
 - `-m elf`：生成 ELF32 relocatable `.o`
 - `-t <file>`：输出符号表
+- `EXTERN <label>`：在 ELF 模式下声明外部标号，引用处生成重定位
 
 示例：
 

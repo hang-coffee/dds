@@ -54,6 +54,7 @@ bool symbol_add_label(symbol_table& symtab, const std::string& name) {
     sym.name = name;
     sym.segment = symtab.current_segment;
     sym.resolved = true;   // 第一遍就确定地址
+    sym.external = false;
 
     // 根据当前段获取地址
     if (symtab.current_segment == SEG_TEXT) {
@@ -62,6 +63,28 @@ bool symbol_add_label(symbol_table& symtab, const std::string& name) {
         sym.address = symtab.data_offset;
     }
 
+    symtab.symbols[name] = sym;
+    return true;
+}
+
+// ---- 添加外部符号声明 ----
+bool symbol_add_extern(symbol_table& symtab, const std::string& name) {
+    auto it = symtab.symbols.find(name);
+    if (it != symtab.symbols.end()) {
+        if (it->second.external) {
+            // 重复 EXTERN 声明允许
+            return true;
+        }
+        symtab.errors.push_back("标号与 EXTERN 声明冲突: " + name);
+        return false;
+    }
+
+    symbol sym;
+    sym.name = name;
+    sym.segment = SEG_TEXT;
+    sym.address = 0;
+    sym.resolved = false;
+    sym.external = true;
     symtab.symbols[name] = sym;
     return true;
 }
@@ -133,7 +156,7 @@ void symbol_print(const symbol_table& symtab) {
     for (const auto& pair : symtab.symbols) {
         const symbol& sym = pair.second;
         std::cout << std::setw(16) << std::left << sym.name << "  "
-                  << (sym.segment == SEG_TEXT ? "TEXT" : "DATA") << "     "
+                  << (sym.external ? "EXTERN" : (sym.segment == SEG_TEXT ? "TEXT" : "DATA")) << "  "
                   << "0x" << std::hex << sym.address << std::dec << std::endl;
     }
 }
@@ -154,7 +177,7 @@ fprintf(out, "----------------------------------------\n");
 for (const auto& pair : symtab.symbols) {
 const symbol& sym = pair.second;
 fprintf(out, "%-16s  %-7s 0x%X\n", sym.name.c_str(),
-        sym.segment == SEG_TEXT ? "TEXT" : "DATA", sym.address);
+        sym.external ? "EXTERN" : (sym.segment == SEG_TEXT ? "TEXT" : "DATA"), sym.address);
 }
 }
 

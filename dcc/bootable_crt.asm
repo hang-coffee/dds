@@ -5,6 +5,8 @@
 SECTION TEXT
 ORG 0
 
+EXTERN func_main
+
 _start:
 LET S, DWORD 0x300000
 MOV A, F

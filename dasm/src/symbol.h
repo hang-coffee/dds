@@ -20,6 +20,7 @@ struct symbol {
     uint32_t address;        // 段内偏移
     segment_type segment;    // 属于哪个段
     bool resolved;           // 是否已解析（第一遍后为 true）
+    bool external;           // 是否为 EXTERN 声明的外部符号
 };
 
 // ---- 符号表 ----
@@ -58,6 +59,7 @@ void symbol_set_org(symbol_table& symtab, segment_type seg, uint32_t base);
 // 在当前段当前位置添加一个标号
 // 如果标号已存在，记录错误并返回 false
 bool symbol_add_label(symbol_table& symtab, const std::string& name);
+bool symbol_add_extern(symbol_table& symtab, const std::string& name);
 
 // ---- 查询标号 ----
 // 返回符号指针，若不存在返回 nullptr
