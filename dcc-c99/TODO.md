@@ -4,11 +4,12 @@
 
 ## 类型系统
 
-- [ ] `short` / `long` / `long long`
-- [ ] `unsigned` / `signed` 限定符
+- [x] `short` / `long` / `long long`（基础解析支持，运算暂按 4 字节槽位处理）
+- [x] `unsigned` / `signed` 限定符（基础解析支持，暂不区分符号语义）
 - [ ] `float` / `double` / `long double`
 - [ ] `_Bool`
-- [ ] `const` / `volatile` / `restrict`
+- [x] `const`（基础解析支持，暂不实施只读检查）
+- [ ] `volatile` / `restrict`
 - [ ] `struct` / `union` / `enum`
 - [ ] `typedef`
 - [ ] 指针、数组、多维数组

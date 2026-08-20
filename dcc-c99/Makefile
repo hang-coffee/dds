@@ -15,8 +15,10 @@ src/%.o: src/%.c
 test: all
 	./dcc-c99 tests/hello.c /tmp/dcc-c99-hello.asm
 	../dasm/dasm /tmp/dcc-c99-hello.asm /tmp/dcc-c99-hello.code /tmp/dcc-c99-hello.data
+	./dcc-c99 tests/types.c /tmp/dcc-c99-types.asm
+	../dasm/dasm /tmp/dcc-c99-types.asm /tmp/dcc-c99-types.code /tmp/dcc-c99-types.data
 
 clean:
-	rm -f dcc-c99 $(OBJ) /tmp/dcc-c99-hello.*
+	rm -f dcc-c99 $(OBJ) /tmp/dcc-c99-hello.* /tmp/dcc-c99-types.*
 
 .PHONY: all test clean

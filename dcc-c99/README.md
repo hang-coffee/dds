@@ -44,7 +44,7 @@ dcc-c99/
 
 ## 当前支持
 
-- `int` / `char` / `void`
+- `int` / `char` / `void` / `short` / `long` / `long long` / `unsigned` / `signed` / `const`（基础解析支持）
 - 全局变量与函数
 - 局部变量
 - `return` / `if/else` / `while` / `for` / `break` / `continue`

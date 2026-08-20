@@ -49,6 +49,7 @@ struct Stmt {
     Stmt **items;          /* STMT_BLOCK */
     int nitems;
     char *name;            /* STMT_DECL */
+    int decl_size;         /* STMT_DECL */
     Stmt *next;            /* 未使用，保留 */
 };
 
@@ -65,6 +66,7 @@ typedef struct {
     char *name;
     int has_init;
     int init;
+    int type_size;
 } Global;
 
 typedef struct {

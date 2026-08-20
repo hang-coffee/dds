@@ -9,6 +9,13 @@ typedef struct {
     char err[512];
 } Parser;
 
+typedef struct {
+    int is_void;
+    int size;
+    int is_unsigned;
+    int is_const;
+} TypeInfo;
+
 static Token *peek(Parser *p, int off) {
     int j = p->i + off;
     if (j >= p->ta->count) j = p->ta->count - 1;
@@ -49,7 +56,32 @@ static Token *expect_kind(Parser *p, TokenKind k) {
 
 static int is_type(Parser *p) {
     Token *t = peek(p,0);
-    return t->kind == T_KW && (strcmp(t->text,"int")==0 || strcmp(t->text,"char")==0 || strcmp(t->text,"void")==0);
+    if (t->kind != T_KW) return 0;
+    return strcmp(t->text,"int")==0 || strcmp(t->text,"char")==0 || strcmp(t->text,"void")==0 ||
+           strcmp(t->text,"short")==0 || strcmp(t->text,"long")==0 ||
+           strcmp(t->text,"unsigned")==0 || strcmp(t->text,"signed")==0 ||
+           strcmp(t->text,"const")==0;
+}
+
+static TypeInfo parse_type_spec(Parser *p) {
+    TypeInfo t;
+    memset(&t, 0, sizeof(t));
+    t.size = 4;
+    int saw_long = 0;
+    while (is_type(p)) {
+        Token *tok = peek(p,0);
+        if (strcmp(tok->text,"const")==0) { t.is_const=1; next(p); }
+        else if (strcmp(tok->text,"signed")==0) { t.is_unsigned=0; next(p); }
+        else if (strcmp(tok->text,"unsigned")==0) { t.is_unsigned=1; next(p); }
+        else if (strcmp(tok->text,"short")==0) { t.size=2; next(p); }
+        else if (strcmp(tok->text,"long")==0) { saw_long++; next(p); }
+        else if (strcmp(tok->text,"char")==0) { t.size=1; next(p); break; }
+        else if (strcmp(tok->text,"int")==0) { t.size=4; next(p); break; }
+        else if (strcmp(tok->text,"void")==0) { t.is_void=1; t.size=0; next(p); break; }
+        else break;
+    }
+    if (saw_long) t.size = 8;
+    return t;
 }
 
 static Expr *expr_new(ExprKind k) {
@@ -263,12 +295,13 @@ static Stmt *parse_stmt(Parser *p) {
         return s;
     }
     if (accept_op(p, ";")) return stmt_new(STMT_EMPTY);
-    if (peek(p,0)->kind == T_KW && (strcmp(peek(p,0)->text,"int")==0 || strcmp(peek(p,0)->text,"char")==0)) {
-        next(p);
+    if (is_type(p)) {
+        TypeInfo ty = parse_type_spec(p);
         Token *name = expect_kind(p, T_ID);
         if (!name) return NULL;
         Stmt *s = stmt_new(STMT_DECL);
         s->name = xstrdup(name->text);
+        s->decl_size = ty.size;
         if (accept_op(p, "=")) s->expr = parse_assign(p);
         if (!expect_op(p, ";")) { stmt_free(s); return NULL; }
         return s;
@@ -347,7 +380,7 @@ Program parse_program(TokenArray *ta, char **err) {
             snprintf(p.err, sizeof(p.err), "line %d: 期望类型", peek(&p,0)->line);
             break;
         }
-        Token *ty = next(&p);
+        TypeInfo ty = parse_type_spec(&p);
         Token *name = expect_kind(&p, T_ID);
         if (!name) break;
 
@@ -356,7 +389,7 @@ Program parse_program(TokenArray *ta, char **err) {
             Function f;
             memset(&f, 0, sizeof(f));
             f.name = xstrdup(name->text);
-            f.ret_void = strcmp(ty->text, "void") == 0;
+            f.ret_void = ty.is_void;
             if (!accept_op(&p, ")")) {
                 if (peek(&p,0)->kind == T_KW && strcmp(peek(&p,0)->text,"void")==0 &&
                     peek(&p,1)->kind == T_OP && strcmp(peek(&p,1)->text,")")==0) {
@@ -368,7 +401,7 @@ Program parse_program(TokenArray *ta, char **err) {
                             snprintf(p.err, sizeof(p.err), "line %d: 期望参数类型", peek(&p,0)->line);
                             break;
                         }
-                        next(&p);
+                        parse_type_spec(&p);
                         Token *pn = expect_kind(&p, T_ID);
                         if (!pn) break;
                         f.params = (char **)realloc(f.params, (size_t)(f.nparams+1)*sizeof(char *));
@@ -392,6 +425,7 @@ Program parse_program(TokenArray *ta, char **err) {
             g.name = xstrdup(name->text);
             g.has_init = 0;
             g.init = 0;
+            g.type_size = ty.size;
             if (accept_op(&p, "=")) {
                 Token *v = next(&p);
                 if (v->kind != T_NUM) {

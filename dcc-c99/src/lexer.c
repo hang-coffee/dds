@@ -21,8 +21,8 @@ static int is_ident_part(char c) {
 
 static int is_keyword(const char *s) {
     static const char *kw[] = {
-        "int", "char", "void", "return", "if", "else",
-        "while", "for", "break", "continue", NULL
+        "int", "char", "void", "short", "long", "unsigned", "signed", "const",
+        "return", "if", "else", "while", "for", "break", "continue", NULL
     };
     for (int i = 0; kw[i]; i++)
         if (strcmp(s, kw[i]) == 0) return 1;
