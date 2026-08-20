@@ -141,9 +141,14 @@ assert_substr "DB 0x210, 0xAA" "$H" "aa"
 assert_substr "DW 0x220, 0x1234 (LE)" "$H" "3412"
 assert_substr "DB 0x228, \"AB\"" "$H" "4142"
 # 符号地址 MSG 应为 0x222（DW 之后）
-$DASM "$T/f5.asm" "$T/f5.code" "$T/f5.data" 2>&1 | grep -q "MSG.*0x222" \
-	&& { echo "PASS: MSG 地址 = 0x222"; ok=$((ok+1)); } \
-	|| { echo "FAIL: MSG 地址 != 0x222"; fail=$((fail+1)); }
+$DASM -t "$T/f5.sym" "$T/f5.asm" "$T/f5.code" "$T/f5.data" >/dev/null 2>&1
+if grep -q "MSG.*0x222" "$T/f5.sym"; then
+	echo "PASS: MSG 地址 = 0x222"
+	ok=$((ok+1))
+else
+	echo "FAIL: MSG 地址 != 0x222"
+	fail=$((fail+1))
+fi
 
 # ---- 7. RER 为 2 字节指令 (encoder 修复) ----
 cat > "$T/f6.asm" <<'EOF'
@@ -158,9 +163,14 @@ EOF
 $DASM "$T/f6.asm" "$T/f6.code" "$T/f6.data" >/dev/null 2>&1
 H=$(hexstr "$T/f6.code")
 assert_substr "RER 编码为 00 19 (2字节)" "$H" "0019"
-$DASM "$T/f6.asm" "$T/f6.code" "$T/f6.data" 2>&1 | grep -q "NEXT.*0x2" \
-	&& { echo "PASS: RER 后标号 NEXT = 0x2"; ok=$((ok+1)); } \
-	|| { echo "FAIL: RER 后标号 NEXT != 0x2"; fail=$((fail+1)); }
+$DASM -t "$T/f6.sym" "$T/f6.asm" "$T/f6.code" "$T/f6.data" >/dev/null 2>&1
+if grep -q "NEXT.*0x2" "$T/f6.sym"; then
+	echo "PASS: RER 后标号 NEXT = 0x2"
+	ok=$((ok+1))
+else
+	echo "FAIL: RER 后标号 NEXT != 0x2"
+	fail=$((fail+1))
+fi
 
 # ---- 8. 错误行号为源文件行号 (B1.7) ----
 cat > "$T/f7.asm" <<'EOF'

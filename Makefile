@@ -28,21 +28,9 @@ clean:
 	done
 	@echo "===== all projects cleaned ====="
 
-# 运行各子项目已有的测试入口。
-# doctor-sim 没有统一 test 目标，因此直接调用其测试脚本。
+# 一键运行全部自动化测试（见 run_tests.sh）
 test:
-	@set -e; \
-	echo "===== dasm test ====="; \
-	$(MAKE) -C dasm test; \
-	echo "===== dcc test ====="; \
-	$(MAKE) -C dcc test; \
-	echo "===== dlinker test ====="; \
-	$(MAKE) -C dlinker test; \
-	echo "===== doctor-sim tests ====="; \
-	sh doctor-sim/tests/run_dasm_test.sh; \
-	sh doctor-sim/tests/run_irq_test.sh; \
-	sh doctor-sim/tests/run_display_test.sh
-	@echo "===== all tests passed ====="
+	./run_tests.sh
 
 help:
 	@echo "Available targets:"

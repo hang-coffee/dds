@@ -91,6 +91,9 @@ int main(int argc, char* argv[]) {
     bool verbose = false;
     if (!dasm::parser_assemble(pctx2, verbose)) {
         std::cerr << "汇编失败" << std::endl;
+        for (const auto& err : pctx2.errors) {
+            std::cerr << "  " << err << std::endl;
+        }
         return 1;
     }
 

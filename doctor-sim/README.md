@@ -7,8 +7,10 @@
 - [x] 完善 Display 层（后端抽象：tty/ansi/ppm/fb，FB 设备已接入）
 - [x] 添加 UART 设备（环回/状态/溢出/接收中断 IRQ4=COM1，输出走 Display 层）
 - [x] 添加 AT 兼容键盘 KBC（Set 1 扫描码、8042 命令/状态、电平式中断 IRQ1）
-- [ ] 完善 `manual.md`、增加 RTC、DISK 设备
-- [ ] dasm 反汇编器（B1.8，见下文「已知问题与限制 - 汇编器」）
+- [x] 增加 DISK 设备（端口 I/O 块设备，见 `dev_specification.md`）
+- [ ] 增加 RTC 设备
+- [ ] 完善 `manual.md` 与 `dev_specification.md`
+- [x] 提供独立反汇编器 `dda`；dasm 内置反汇编仍为可选的后续增强
 
 ## 编译方法
 推荐使用GCC编译器。在命令行中输入：
@@ -128,8 +130,8 @@ sh tests/run_display_test.sh                  # Display 层 + FB 设备（PPM �
 - ~~`device_destroy_all` 从未调用 / 设备私有数据泄漏~~ **已修复**：`cpu_free()` 调用
   `device_destroy_all` 释放 PIT/FB/UART 私有数据（ASan detect_leaks 验证无泄漏）；
   `device_dump_all` 由 `--dump-devices` 参数触发；`device_reset_all` 仍为预留接口。
-- 已实现 **PIT**、**FB**（帧缓冲）、**UART** 与 **KBC**（AT 兼容键盘，见 `dev_specification.md`）；
-  `RTC`/`DISK` 只存在于 `Device_type` 枚举。
+- 已实现 **PIT**、**FB**（帧缓冲）、**UART**、**KBC**（AT 兼容键盘）与 **DISK**（块设备），
+  端口与行为见 `dev_specification.md`。`RTC` 尚未实现。
 - **MMIO 未接入**：`device.h` 有 `is_mmio`/`base_mem` 字段，但内存访问路径
   （`mem.h` 的 load/store）没有设备映射逻辑。
 - PIT 细节：真实时间模式（μs/ms/s，TU=00/01/10）用墙钟驱动，与模拟执行速度无关，
@@ -181,7 +183,7 @@ sh tests/run_display_test.sh                  # Display 层 + FB 设备（PPM �
    `DB/DW/DD/DQ` 的地址参数会把数据定位到指定地址（之前自动补零填充）。地址小于当前偏移时报错。
 6. ~~`DB/DW/DD/DQ` 地址参数被忽略~~ 见上一条（已实现固定地址定位）。
 7. ~~错误行号为预处理后行号~~ **已修复**：错误报告的 `行 N` 对应源文件真实行号。
-8. **无反汇编（disassembler）功能** —— 仍待实现（与「实现更多指令」轮一起做）。
+8. **dasm 内置反汇编** —— 仓库已有独立反汇编器 `dda`（读取 ELF32 `.o` 输出 DASM）；如需在 dasm 内直接提供二进制反汇编入口，可作为后续增强。
 
 #### B1.9 新增的严格检查（本次加入）
 - **尺寸检查**：manual 标注「需要尺寸」的指令（`PUSH`/`POP`/`LR`/`ST`/`ADD`/`SFA` 等）缺少

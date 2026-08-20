@@ -21,7 +21,12 @@ DOCTOR 是一个低端教学/实验用指令集架构。本仓库包含：
 ## 目录结构
 
 ```
-dds/
+.
+├── Makefile
+├── run_tests.sh
+├── README.md
+├── TODO.md
+├── manual.md
 ├── doctor-sim/
 │   ├── dev_specification.md
 │   ├── Makefile
@@ -48,12 +53,10 @@ dds/
 │   ├── README.md
 │   ├── src/
 │   └── tests/
-├── dda/
-│   ├── Makefile
-│   ├── README.md
-│   └── src/
-├── README.md
-└── manual.md
+└── dda/
+    ├── Makefile
+    ├── README.md
+    └── src/
 ```
 
 ## 快速构建
@@ -74,6 +77,9 @@ make clean
 
 # 运行各子项目测试
 make test
+
+# 或直接运行一键测试脚本
+./run_tests.sh
 ```
 
 ## 简单工具链示例
