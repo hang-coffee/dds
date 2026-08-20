@@ -1,0 +1,22 @@
+# dcc-c99 - dcc 的 C99 重写（最小实现）
+CC ?= gcc
+CFLAGS ?= -std=c99 -O2 -Wall -Wextra -Isrc
+SRC := src/main.c src/lexer.c src/parser.c src/ast.c src/codegen.c
+OBJ := $(SRC:.c=.o)
+
+all: dcc-c99
+
+dcc-c99: $(OBJ)
+	$(CC) $(CFLAGS) -o $@ $(OBJ)
+
+src/%.o: src/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+test: all
+	./dcc-c99 tests/hello.c /tmp/dcc-c99-hello.asm
+	../dasm/dasm /tmp/dcc-c99-hello.asm /tmp/dcc-c99-hello.code /tmp/dcc-c99-hello.data
+
+clean:
+	rm -f dcc-c99 $(OBJ) /tmp/dcc-c99-hello.*
+
+.PHONY: all test clean
