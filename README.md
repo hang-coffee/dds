@@ -9,9 +9,9 @@ DOCTOR 是一个低端教学/实验用指令集架构。本仓库包含：
   - `Makefile` / `README.md` / `dev_specification.md`
 - **dasm**：DOCTOR 汇编器
   - 支持生成普通二进制或 ELF32 relocatable `.o`
-- **dcc**：DOCTOR C 子集编译器
+- **dcc**：DOCTOR C 子集编译器（C99 重写版）
   - 支持输出 dasm 汇编、ELF32 目标文件、二进制
-  - 提供 `include/`、`lib/`、`docs/`、`test/`
+  - 提供 `lib/`、`docs/`、`tests/`
 - **dlinker**：DOCTOR 最小链接器
   - 链接多个 ELF32 `.o`，生成 `*_code.bin` / `*_data.bin`
 - **dda**：DOCTOR ELF 反汇编器
@@ -38,10 +38,9 @@ DOCTOR 是一个低端教学/实验用指令集架构。本仓库包含：
 │   ├── Makefile
 │   ├── README.md
 │   ├── src/
-│   ├── include/
 │   ├── lib/
 │   ├── docs/
-│   └── test/
+│   └── tests/
 ├── dasm/
 │   ├── Makefile
 │   ├── README.md

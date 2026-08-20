@@ -1,30 +1,29 @@
-// preprocessor.h - dcc 预处理器（#include / #define 等）
-#ifndef DCC_PREPROCESSOR_H
-#define DCC_PREPROCESSOR_H
+#ifndef DCC_C99_PREPROCESSOR_H
+#define DCC_C99_PREPROCESSOR_H
 
-#include <string>
-#include <vector>
+typedef struct {
+    char **include_dirs;
+    int n_include_dirs;
+    int cap_include_dirs;
+    int hosted;              /* 1 = -fhosted（默认），0 = -ffreestanding */
+    char *lib_include_dir;   /* dcc 根目录/lib/{hosted,freestanding}/include */
+} PreprocessOptions;
 
-namespace dcc {
+void preprocess_options_init(PreprocessOptions *opt);
+void preprocess_options_add_include_dir(PreprocessOptions *opt, const char *dir);
+void preprocess_options_free(PreprocessOptions *opt);
 
-// 预处理结果
-struct PreprocessResult {
-	std::string text;				// 宏展开/注释剥离后的完整文本
-	std::vector<std::string> errs;	// 错误："文件:行: 消息"
-	std::vector<std::string> includes;	// 被实际展开的 #include 头文件 basename（去扩展名，去重）
-	bool ok() const { return errs.empty(); }
-};
+typedef struct {
+    char *source;
+    char **headers;
+    int nheaders;
+} PreprocessResult;
 
-// 预处理：处理 #include / #define / #undef / #ifdef / #ifndef / #else / #endif，
-// 展开对象宏与函数宏，剥离注释（保留换行）。
-//   src       源文件内容
-//   filename  源文件名（用于错误信息与 "..." 相对查找）
-//   include_dir  `<foo.h>` 的默认查找目录（如 项目根/dcc/include）；
-//               `"foo.h"` 先找当前文件目录，再回退 include_dir。
-PreprocessResult preprocess(const std::string& src,
-                            const std::string& filename,
-                            const std::string& include_dir);
+/* 对 path 指向的源文件做预处理，返回展开后的源码文本（调用者 free）。失败返回 NULL 并设置 *err。 */
+char *preprocess_file(const char *path, const PreprocessOptions *opt, char **err);
 
-} // namespace dcc
+/* 预处理并记录所有实际包含的头文件绝对/相对路径。返回 result.source 和 result.headers。 */
+PreprocessResult preprocess_file_result(const char *path, const PreprocessOptions *opt, char **err);
+void preprocess_result_free(PreprocessResult *r);
 
 #endif

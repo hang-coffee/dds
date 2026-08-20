@@ -1,33 +1,34 @@
-// lexer.h - dcc 词法分析器
-#ifndef DCC_LEXER_H
-#define DCC_LEXER_H
+#ifndef DCC_C99_LEXER_H
+#define DCC_C99_LEXER_H
 
-#include "token.h"
-#include <string>
-#include <vector>
+typedef enum {
+    T_NUM,
+    T_FLOAT,
+    T_STR,
+    T_ID,
+    T_KW,
+    T_OP,
+    T_EOF
+} TokenKind;
 
-namespace dcc {
+typedef struct {
+    TokenKind kind;
+    char *text;
+    long long ival;
+    double fval;
+    int line;
+    int is_long;
+    int is_unsigned;
+    int is_double;
+} Token;
 
-class Lexer {
-public:
-	explicit Lexer(const std::string& src);
-	std::vector<Token> tokenize();
-	const std::vector<std::string>& errors() const { return errs_; }
+typedef struct {
+    Token *toks;
+    int count;
+    int cap;
+} TokenArray;
 
-private:
-	const std::string& src_;
-	size_t pos_;
-	int line_;
-	std::vector<std::string> errs_;
-
-	char peek(size_t off = 0) const;
-	char advance();
-	void skip_whitespace_and_comments();
-	Token make(TokenKind k, const std::string& txt);
-	bool is_ident_start(char c) const;
-	bool is_ident_part(char c) const;
-};
-
-} // namespace dcc
+TokenArray tokenize(const char *src);
+void token_array_free(TokenArray *ta);
 
 #endif
