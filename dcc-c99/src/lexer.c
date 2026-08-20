@@ -22,6 +22,7 @@ static int is_ident_part(char c) {
 static int is_keyword(const char *s) {
     static const char *kw[] = {
         "int", "char", "void", "short", "long", "unsigned", "signed", "const",
+        "float", "double",
         "return", "if", "else", "while", "for", "break", "continue", NULL
     };
     for (int i = 0; kw[i]; i++)
@@ -85,6 +86,31 @@ TokenArray tokenize(const char *src) {
                 while (isdigit((unsigned char)src[i])) {
                     t.ival = t.ival * 10 + (src[i]-'0');
                     i++;
+                }
+                if (src[i]=='.' || src[i]=='e' || src[i]=='E' || src[i]=='f' || src[i]=='F') {
+                    int is_float = 1;
+                    if (src[i]=='.') {
+                        i++;
+                        while (isdigit((unsigned char)src[i])) i++;
+                    }
+                    if (src[i]=='e' || src[i]=='E') {
+                        i++;
+                        if (src[i]=='+' || src[i]=='-') i++;
+                        while (isdigit((unsigned char)src[i])) i++;
+                    }
+                    if (src[i]=='f' || src[i]=='F') i++;
+                    size_t len = (size_t)(src + i - start);
+                    char *buf = (char *)malloc(len + 1);
+                    memcpy(buf, start, len);
+                    buf[len] = 0;
+                    Token ft;
+                    memset(&ft, 0, sizeof(ft));
+                    ft.kind = T_FLOAT;
+                    ft.text = buf;
+                    ft.fval = strtod(buf, NULL);
+                    ft.line = line;
+                    ta_push(&ta, ft);
+                    continue;
                 }
                 int suffix = 0;
                 while (src[i]=='u' || src[i]=='U' || src[i]=='l' || src[i]=='L') {

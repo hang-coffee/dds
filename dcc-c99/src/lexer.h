@@ -3,6 +3,7 @@
 
 typedef enum {
     T_NUM,
+    T_FLOAT,
     T_ID,
     T_KW,
     T_OP,
@@ -13,6 +14,7 @@ typedef struct {
     TokenKind kind;
     char *text;
     long long ival;
+    double fval;
     int line;
     int is_long;
     int is_unsigned;

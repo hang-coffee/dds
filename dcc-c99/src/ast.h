@@ -17,8 +17,11 @@ typedef enum {
 struct Expr {
     ExprKind kind;
     long long ival;        /* EXPR_NUM */
+    double fval;           /* EXPR_NUM 浮点字面量 */
     int type_size;         /* EXPR_NUM / 表达式类型尺寸 */
     int is_unsigned;       /* EXPR_NUM / 表达式是否无符号 */
+    int is_float;          /* 表达式是否为 float */
+    int is_double;         /* 表达式是否为 double */
     char *name;            /* EXPR_VAR / EXPR_CALL */
     char *op;              /* EXPR_BIN / EXPR_UNARY / EXPR_ASSIGN / EXPR_INCDEC */
     Expr *l, *r;           /* children */
@@ -53,6 +56,8 @@ struct Stmt {
     char *name;            /* STMT_DECL */
     int decl_size;         /* STMT_DECL */
     int decl_unsigned;     /* STMT_DECL */
+    int decl_float;         /* STMT_DECL */
+    int decl_double;        /* STMT_DECL */
     Stmt *next;            /* 未使用，保留 */
 };
 
@@ -67,6 +72,10 @@ typedef struct {
     int ret_void;
     int ret_size;
     int ret_unsigned;
+    int ret_float;
+    int ret_double;
+    int *param_float;
+    int *param_double;
 } Function;
 
 typedef struct {
@@ -75,6 +84,8 @@ typedef struct {
     int init;
     int type_size;
     int is_unsigned;
+    int is_float;
+    int is_double;
 } Global;
 
 typedef struct {
