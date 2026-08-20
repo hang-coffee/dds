@@ -19,7 +19,7 @@
 - [ ] 对照 `manual.md` 检查指令编码示例、寄存器定义、中断/异常/MPU/浮点语义是否与模拟器一致
 - [ ] `device_reset_all` 仍为预留接口，可完善设备复位语义并增加复位测试
 - [ ] MMIO 尚未进入当前设备规范；如未来要支持内存映射设备，应先扩展 `dev_specification.md`，再在 `mem.h` 访问路径中接入设备映射
-- [ ] RTC 尚未出现在 `dev_specification.md` 与实现中；若计划支持，应先补设备规范、端口分配、IRQ 分配
+- [ ] RTC 设备规范已加入 `dev_specification.md`（端口 `0x30`-`0x3D`，IRQ2）；模拟器尚未实现
 
 ## doctor-sim：设备层（按 dev_specification.md）
 
