@@ -39,6 +39,7 @@ typedef struct {
 static VarInfo *local_info(CodeGen *cg, const char *name);
 static ParamInfo *param_info(CodeGen *cg, const char *name);
 static void emit_store_to_b(CodeGen *cg, int size);
+static void emit_load_from_b(CodeGen *cg, int size, int is_unsigned);
 
 static char *xstrdup(const char *s) {
     size_t n = strlen(s) + 1;
@@ -56,10 +57,10 @@ static void cg_emit(CodeGen *cg, const char *fmt, ...) {
     va_end(ap);
 }
 
-static const char *cg_new_label(CodeGen *cg, const char *prefix) {
-    static char buf[64];
+static char *cg_new_label(CodeGen *cg, const char *prefix) {
+    char *buf = (char *)malloc(64);
     cg->label++;
-    snprintf(buf, sizeof(buf), "%s%d", prefix, cg->label);
+    snprintf(buf, 64, "%s%d", prefix, cg->label);
     return buf;
 }
 
@@ -84,11 +85,11 @@ static Global *global_info(Program *p, const char *name) {
 static int var_size(CodeGen *cg, Expr *e) {
     if (e->kind != EXPR_VAR) return 4;
     VarInfo *li = local_info(cg, e->name);
-    if (li) return li->size == 8 ? 8 : 4;
+    if (li) return li->size;
     ParamInfo *pi = param_info(cg, e->name);
-    if (pi) return pi->size == 8 ? 8 : 4;
+    if (pi) return pi->size;
     Global *g = global_info(cg->prog, e->name);
-    if (g) return g->type_size == 8 ? 8 : 4;
+    if (g) return g->type_size;
     return 4;
 }
 
@@ -179,7 +180,7 @@ static void collect_locals(CodeGen *cg, Stmt **stmts, int n, int *frame) {
     for (int i = 0; i < n; i++) {
         Stmt *s = stmts[i];
         if (s->kind == STMT_DECL) {
-            int sz = s->decl_size == 8 ? 8 : 4;
+            int sz = s->decl_size > 0 ? s->decl_size : 4;
             cg_push_local(cg, s->name, *frame, sz, s->decl_unsigned);
             *frame += sz;
         } else if (s->kind == STMT_BLOCK) {
@@ -217,11 +218,11 @@ static void gen_incdec(CodeGen *cg, Expr *e, int postfix) {
     Expr *target = e->r ? e->r : e->l;
     var_addr(cg, target);
     cg_emit(cg, "MOV B, A");
-    cg_emit(cg, "LR DWORD A, *B");
+    emit_load_from_b(cg, var_size(cg, target), var_unsigned(cg, target));
     if (postfix) cg_emit(cg, "PUSH DWORD A");
     if (strcmp(e->op, "+") == 0) cg_emit(cg, "ADD DWORD A, 1");
     else cg_emit(cg, "SUB DWORD A, 1");
-    cg_emit(cg, "ST DWORD *B, A");
+    emit_store_to_b(cg, var_size(cg, target));
     if (postfix) cg_emit(cg, "POP DWORD A");
 }
 
@@ -593,10 +594,82 @@ static void gen_long_binop(CodeGen *cg, Expr *e) {
     }
 }
 
+
+static void emit_signed_div32(CodeGen *cg) {
+    const char *l1 = cg_new_label(cg, "SD");
+    const char *l2 = cg_new_label(cg, "SD");
+    const char *l3 = cg_new_label(cg, "SD");
+    const char *l4 = cg_new_label(cg, "SD");
+    const char *l5 = cg_new_label(cg, "SD");
+    const char *l6 = cg_new_label(cg, "SD");
+    const char *l7 = cg_new_label(cg, "SD");
+    const char *l8 = cg_new_label(cg, "SD");
+    cg_emit(cg, "ZERO T");
+    cg_emit(cg, "MOV C, A");
+    cg_emit(cg, "CMP DWORD T");
+    cg_emit(cg, "LET E, DWORD %s", l1);
+    cg_emit(cg, "JNL DWORD T");
+    cg_emit(cg, "LET X, DWORD 1");
+    cg_emit(cg, "LET E, DWORD %s", l2);
+    cg_emit(cg, "JMP");
+    cg_emit(cg, "%s:", l1);
+    cg_emit(cg, "ZERO X");
+    cg_emit(cg, "%s:", l2);
+    cg_emit(cg, "MOV C, B");
+    cg_emit(cg, "CMP DWORD T");
+    cg_emit(cg, "LET E, DWORD %s", l3);
+    cg_emit(cg, "JNL DWORD T");
+    cg_emit(cg, "LET R, DWORD 1");
+    cg_emit(cg, "LET E, DWORD %s", l4);
+    cg_emit(cg, "JMP");
+    cg_emit(cg, "%s:", l3);
+    cg_emit(cg, "ZERO R");
+    cg_emit(cg, "%s:", l4);
+    cg_emit(cg, "MOV I, X");
+    cg_emit(cg, "XOR DWORD I, R");
+    cg_emit(cg, "MOV C, A");
+    cg_emit(cg, "CMP DWORD T");
+    cg_emit(cg, "LET E, DWORD %s", l5);
+    cg_emit(cg, "JNL DWORD T");
+    cg_emit(cg, "MNE DWORD A");
+    cg_emit(cg, "%s:", l5);
+    cg_emit(cg, "MOV C, B");
+    cg_emit(cg, "CMP DWORD T");
+    cg_emit(cg, "LET E, DWORD %s", l6);
+    cg_emit(cg, "JNL DWORD T");
+    cg_emit(cg, "MNE DWORD B");
+    cg_emit(cg, "%s:", l6);
+    cg_emit(cg, "DIV DWORD A, B");
+    cg_emit(cg, "MOV C, I");
+    cg_emit(cg, "CMP DWORD T");
+    cg_emit(cg, "LET E, DWORD %s", l7);
+    cg_emit(cg, "JZ");
+    cg_emit(cg, "MNE DWORD D2");
+    cg_emit(cg, "%s:", l7);
+    cg_emit(cg, "MOV C, X");
+    cg_emit(cg, "CMP DWORD T");
+    cg_emit(cg, "LET E, DWORD %s", l8);
+    cg_emit(cg, "JZ");
+    cg_emit(cg, "MNE DWORD D1");
+    cg_emit(cg, "%s:", l8);
+}
+
 static void gen_binop(CodeGen *cg, Expr *e) {
     const char *op = e->op;
     if (strcmp(op, "&&") != 0 && strcmp(op, "||") != 0 && expr_size(cg, e) == 8) {
         gen_long_binop(cg, e);
+        return;
+    }
+    if ((strcmp(op, "<<") == 0 || strcmp(op, ">>") == 0) && expr_size(cg, e) != 8) {
+        if (e->r->kind != EXPR_NUM) {
+            fprintf(stderr, "line %d: 移位量必须是常量\n", e->line);
+            exit(1);
+        }
+        gen_expr(cg, e->l);
+        if (strcmp(op, "<<") == 0)
+            cg_emit(cg, "SHL DWORD A, %d", e->r->ival);
+        else
+            cg_emit(cg, (expr_unsigned(cg, e) ? "SHR DWORD A, %d" : "MSR DWORD A, %d"), e->r->ival);
         return;
     }
     if (strcmp(op, "&&") == 0) {
@@ -650,13 +723,19 @@ static void gen_binop(CodeGen *cg, Expr *e) {
     if (strcmp(op, "+")==0) cg_emit(cg, "ADD DWORD A, B");
     else if (strcmp(op, "-")==0) cg_emit(cg, "SUB DWORD A, B");
     else if (strcmp(op, "*")==0) { cg_emit(cg, "MUL DWORD A, B"); cg_emit(cg, "MOV A, D2"); }
-    else if (strcmp(op, "/")==0) { cg_emit(cg, "DIV DWORD A, B"); cg_emit(cg, "MOV A, D2"); }
-    else if (strcmp(op, "%")==0) { cg_emit(cg, "DIV DWORD A, B"); cg_emit(cg, "MOV A, D1"); }
+    else if (strcmp(op, "/")==0) {
+        if (expr_unsigned(cg, e)) { cg_emit(cg, "DIV DWORD A, B"); cg_emit(cg, "MOV A, D2"); }
+        else { emit_signed_div32(cg); cg_emit(cg, "MOV A, D2"); }
+    }
+    else if (strcmp(op, "%")==0) {
+        if (expr_unsigned(cg, e)) { cg_emit(cg, "DIV DWORD A, B"); cg_emit(cg, "MOV A, D1"); }
+        else { emit_signed_div32(cg); cg_emit(cg, "MOV A, D1"); }
+    }
     else if (strcmp(op, "&")==0) cg_emit(cg, "AND DWORD A, B");
     else if (strcmp(op, "|")==0) cg_emit(cg, "OR DWORD A, B");
     else if (strcmp(op, "^")==0) cg_emit(cg, "XOR DWORD A, B");
     else if (strcmp(op, "<<")==0) cg_emit(cg, "SHL DWORD A, B");
-    else if (strcmp(op, ">>")==0) cg_emit(cg, "SHR DWORD A, B");
+    else if (strcmp(op, ">>")==0) cg_emit(cg, (expr_unsigned(cg, e) ? "SHR DWORD A, B" : "MSR DWORD A, B"));
     else if (strcmp(op,"==")==0 || strcmp(op,"!=")==0 || strcmp(op,"<")==0 ||
              strcmp(op,"<=")==0 || strcmp(op,">")==0 || strcmp(op,">=")==0) {
         const char *lt = cg_new_label(cg, "CMP");
@@ -667,10 +746,10 @@ static void gen_binop(CodeGen *cg, Expr *e) {
         cg_emit(cg, "LET E, DWORD %s", lt);
         if (strcmp(op,"==")==0) cg_emit(cg, "JZ");
         else if (strcmp(op,"!=")==0) cg_emit(cg, "JNZ");
-        else if (strcmp(op,"<")==0) cg_emit(cg, "JL DWORD T");
-        else if (strcmp(op,"<=")==0) cg_emit(cg, "JNG DWORD T");
-        else if (strcmp(op,">")==0) cg_emit(cg, "JG DWORD T");
-        else cg_emit(cg, "JNL DWORD T");
+        else if (strcmp(op,"<")==0) cg_emit(cg, (expr_unsigned(cg, e) ? "JB DWORD T" : "JL DWORD T"));
+        else if (strcmp(op,"<=")==0) cg_emit(cg, (expr_unsigned(cg, e) ? "JNA DWORD T" : "JNG DWORD T"));
+        else if (strcmp(op,">")==0) cg_emit(cg, (expr_unsigned(cg, e) ? "JA DWORD T" : "JG DWORD T"));
+        else cg_emit(cg, (expr_unsigned(cg, e) ? "JNB DWORD T" : "JNL DWORD T"));
         cg_emit(cg, "LET A, DWORD 0");
         cg_emit(cg, "LET E, DWORD %s", le);
         cg_emit(cg, "JMP");
@@ -695,7 +774,7 @@ static void gen_assign(CodeGen *cg, Expr *e) {
     }
     cg_emit(cg, "PUSH DWORD B");
     cg_emit(cg, "PUSH DWORD A");
-    cg_emit(cg, "LR DWORD A, *B");
+    emit_load_from_b(cg, var_size(cg, e->l), var_unsigned(cg, e->l));
     cg_emit(cg, "MOV C, A");
     cg_emit(cg, "POP DWORD B");
     const char *op = e->op;
@@ -711,7 +790,7 @@ static void gen_assign(CodeGen *cg, Expr *e) {
     else if (strcmp(op, ">>=")==0) cg_emit(cg, "SHR DWORD C, B");
     cg_emit(cg, "POP DWORD B");
     cg_emit(cg, "MOV A, C");
-    cg_emit(cg, "ST DWORD *B, A");
+    emit_store_to_b(cg, var_size(cg, e->l));
 }
 
 static int expr_size(CodeGen *cg, Expr *e) {
@@ -749,11 +828,24 @@ static int expr_unsigned(CodeGen *cg, Expr *e) {
 
 static void emit_load_var(CodeGen *cg, Expr *e) {
     var_addr(cg, e);
-    if (var_size(cg, e) == 8) {
+    int sz = var_size(cg, e);
+    if (sz == 8) {
         cg_emit(cg, "MOV R, A");
         cg_emit(cg, "LR DWORD A, *R");
         cg_emit(cg, "ADD DWORD R, 4");
         cg_emit(cg, "LR DWORD D1, *R");
+    } else if (sz == 1) {
+        cg_emit(cg, "LR BYTE A, *A");
+        if (!var_unsigned(cg, e)) {
+            cg_emit(cg, "SHL DWORD A, 24");
+            cg_emit(cg, "MSR DWORD A, 24");
+        }
+    } else if (sz == 2) {
+        cg_emit(cg, "LR WORD A, *A");
+        if (!var_unsigned(cg, e)) {
+            cg_emit(cg, "SHL DWORD A, 16");
+            cg_emit(cg, "MSR DWORD A, 16");
+        }
     } else {
         cg_emit(cg, "LR DWORD A, *A");
     }
@@ -765,8 +857,35 @@ static void emit_store_to_b(CodeGen *cg, int size) {
         cg_emit(cg, "MOV R, B");
         cg_emit(cg, "ADD DWORD R, 4");
         cg_emit(cg, "ST DWORD *R, D1");
+    } else if (size == 1) {
+        cg_emit(cg, "ST BYTE *B, A");
+    } else if (size == 2) {
+        cg_emit(cg, "ST WORD *B, A");
     } else {
         cg_emit(cg, "ST DWORD *B, A");
+    }
+}
+
+static void emit_load_from_b(CodeGen *cg, int size, int is_unsigned) {
+    if (size == 8) {
+        cg_emit(cg, "MOV R, B");
+        cg_emit(cg, "LR DWORD A, *R");
+        cg_emit(cg, "ADD DWORD R, 4");
+        cg_emit(cg, "LR DWORD D1, *R");
+    } else if (size == 1) {
+        cg_emit(cg, "LR BYTE A, *B");
+        if (!is_unsigned) {
+            cg_emit(cg, "SHL DWORD A, 24");
+            cg_emit(cg, "MSR DWORD A, 24");
+        }
+    } else if (size == 2) {
+        cg_emit(cg, "LR WORD A, *B");
+        if (!is_unsigned) {
+            cg_emit(cg, "SHL DWORD A, 16");
+            cg_emit(cg, "MSR DWORD A, 16");
+        }
+    } else {
+        cg_emit(cg, "LR DWORD A, *B");
     }
 }
 
@@ -828,13 +947,15 @@ static void gen_stmt(CodeGen *cg, Stmt *s) {
         case STMT_DECL:
             if (s->expr) {
                 gen_expr(cg, s->expr);
+                cg_emit(cg, "PUSH DWORD A");
                 Expr tmp;
                 memset(&tmp, 0, sizeof(tmp));
                 tmp.kind = EXPR_VAR;
                 tmp.name = s->name;
                 var_addr(cg, &tmp);
                 cg_emit(cg, "MOV B, A");
-                cg_emit(cg, "ST DWORD *B, A");
+                cg_emit(cg, "POP DWORD A");
+                emit_store_to_b(cg, s->decl_size > 0 ? s->decl_size : 4);
             }
             break;
         case STMT_RETURN: {
@@ -930,7 +1051,7 @@ static void gen_func(CodeGen *cg, Function *f) {
     int n = f->nparams;
     int acc = 0;
     for (int i = n - 1; i >= 0; i--) {
-        int sz = (f->param_sizes && f->param_sizes[i] == 8) ? 8 : 4;
+        int sz = (f->param_sizes && f->param_sizes[i] > 0) ? f->param_sizes[i] : 4;
         acc += sz;
         cg_push_param(cg, f->params[i], acc + 3, sz,
                       f->param_unsigned ? f->param_unsigned[i] : 0);
@@ -968,14 +1089,19 @@ int generate_code(Program *p, const char *outpath, char **err) {
     for (int i = 0; i < p->nglobals; i++) {
         Global *g = &p->globals[i];
         fprintf(out, "var_%s:\n", g->name);
-        if (g->type_size == 8) {
-            fprintf(out, "\tDD %d, %d\n", off, g->has_init ? g->init : 0);
+        int gsz = g->type_size > 0 ? g->type_size : 4;
+        int val = g->has_init ? g->init : 0;
+        if (gsz == 8) {
+            fprintf(out, "\tDD %d, %d\n", off, val);
             fprintf(out, "\tDD %d, 0\n", off + 4);
-            off += 8;
+        } else if (gsz == 1) {
+            fprintf(out, "\tDB %d, 0x%02X\n", off, val & 0xff);
+        } else if (gsz == 2) {
+            fprintf(out, "\tDW %d, %d\n", off, val & 0xffff);
         } else {
-            fprintf(out, "\tDD %d, %d\n", off, g->has_init ? g->init : 0);
-            off += 4;
+            fprintf(out, "\tDD %d, %d\n", off, val);
         }
+        off += gsz;
     }
     fprintf(out, "\n\tSECTION TEXT\n\tORG 0\n");
     for (int i = 0; i < p->nfuncs; i++) gen_func(&cg, &p->funcs[i]);
