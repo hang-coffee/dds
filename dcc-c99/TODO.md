@@ -10,7 +10,7 @@
 - [ ] `long double`
 - [x] `_Bool`（1 字节存储，赋值归一化为 0/1）
 - [x] `const`（只读检查已实现：赋值/自增自减/复合赋值均报错）
-- [ ] `volatile` / `restrict`
+- [x] `volatile` / `restrict`（语法解析支持，当前不产生额外语义）
 - [ ] `struct` / `union` / `enum`
 - [ ] `typedef`
 - [ ] 指针、数组、多维数组

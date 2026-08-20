@@ -17,6 +17,8 @@ typedef struct {
     int is_float;
     int is_double;
     int is_bool;
+    int is_volatile;
+    int is_restrict;
 } TypeInfo;
 
 static Token *peek(Parser *p, int off) {
@@ -64,7 +66,8 @@ static int is_type(Parser *p) {
            strcmp(t->text,"short")==0 || strcmp(t->text,"long")==0 ||
            strcmp(t->text,"unsigned")==0 || strcmp(t->text,"signed")==0 ||
            strcmp(t->text,"const")==0 || strcmp(t->text,"float")==0 ||
-           strcmp(t->text,"double")==0 || strcmp(t->text,"_Bool")==0;
+           strcmp(t->text,"double")==0 || strcmp(t->text,"_Bool")==0 ||
+           strcmp(t->text,"volatile")==0 || strcmp(t->text,"restrict")==0;
 }
 
 static TypeInfo parse_type_spec(Parser *p) {
@@ -76,6 +79,8 @@ static TypeInfo parse_type_spec(Parser *p) {
         Token *tok = peek(p,0);
         if (strcmp(tok->text,"const")==0) { t.is_const=1; next(p); }
         else if (strcmp(tok->text,"signed")==0) { t.is_unsigned=0; next(p); }
+        else if (strcmp(tok->text,"volatile")==0) { t.is_volatile=1; next(p); }
+        else if (strcmp(tok->text,"restrict")==0) { t.is_restrict=1; next(p); }
         else if (strcmp(tok->text,"unsigned")==0) { t.is_unsigned=1; next(p); }
         else if (strcmp(tok->text,"short")==0) { t.size=2; next(p); }
         else if (strcmp(tok->text,"long")==0) { saw_long++; next(p); }
