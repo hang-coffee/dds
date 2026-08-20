@@ -60,6 +60,7 @@ struct Stmt {
     int decl_float;         /* STMT_DECL */
     int decl_double;        /* STMT_DECL */
     int decl_const;         /* STMT_DECL */
+    int decl_bool;          /* STMT_DECL */
     Stmt *next;            /* 未使用，保留 */
 };
 
@@ -79,6 +80,8 @@ typedef struct {
     int *param_float;
     int *param_double;
     int *param_const;
+    int *param_bool;
+    int ret_bool;
 } Function;
 
 typedef struct {
@@ -90,6 +93,7 @@ typedef struct {
     int is_float;
     int is_double;
     int is_const;
+    int is_bool;
 } Global;
 
 typedef struct {

@@ -22,7 +22,7 @@ static int is_ident_part(char c) {
 static int is_keyword(const char *s) {
     static const char *kw[] = {
         "int", "char", "void", "short", "long", "unsigned", "signed", "const",
-        "float", "double",
+        "float", "double", "_Bool",
         "return", "if", "else", "while", "for", "break", "continue", NULL
     };
     for (int i = 0; kw[i]; i++)

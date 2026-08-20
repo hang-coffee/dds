@@ -8,7 +8,7 @@
 - [x] `unsigned` / `signed` 限定符（64 位比较/右移/除法已区分有符号与无符号）
 - [x] `float` / `double`（基本存储、赋值、四则运算、函数传参/返回）
 - [ ] `long double`
-- [ ] `_Bool`
+- [x] `_Bool`（1 字节存储，赋值归一化为 0/1）
 - [x] `const`（只读检查已实现：赋值/自增自减/复合赋值均报错）
 - [ ] `volatile` / `restrict`
 - [ ] `struct` / `union` / `enum`

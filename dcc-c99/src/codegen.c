@@ -13,6 +13,7 @@ typedef struct {
     int is_float;
     int is_double;
     int is_const;
+    int is_bool;
 } VarInfo;
 
 typedef struct {
@@ -23,6 +24,7 @@ typedef struct {
     int is_float;
     int is_double;
     int is_const;
+    int is_bool;
 } ParamInfo;
 
 typedef struct {
@@ -146,10 +148,37 @@ static int var_is_const(CodeGen *cg, Expr *e) {
     return 0;
 }
 
+static int var_is_bool(CodeGen *cg, Expr *e) {
+    if (e->kind != EXPR_VAR) return 0;
+    VarInfo *li = local_info(cg, e->name);
+    if (li) return li->is_bool;
+    ParamInfo *pi = param_info(cg, e->name);
+    if (pi) return pi->is_bool;
+    Global *g = global_info(cg->prog, e->name);
+    if (g) return g->is_bool;
+    return 0;
+}
+
+static void emit_bool_normalize(CodeGen *cg) {
+    cg_emit(cg, "MOV C, A");
+    cg_emit(cg, "ZERO T");
+    cg_emit(cg, "CMP DWORD T");
+    const char *l1 = cg_new_label(cg, "BL");
+    const char *l2 = cg_new_label(cg, "BL");
+    cg_emit(cg, "LET E, DWORD %s", l1);
+    cg_emit(cg, "JZ");
+    cg_emit(cg, "LET A, DWORD 1");
+    cg_emit(cg, "LET E, DWORD %s", l2);
+    cg_emit(cg, "JMP");
+    cg_emit(cg, "%s:", l1);
+    cg_emit(cg, "LET A, DWORD 0");
+    cg_emit(cg, "%s:", l2);
+}
+
 static int expr_size(CodeGen *cg, Expr *e);
 static int expr_unsigned(CodeGen *cg, Expr *e);
 
-static void cg_push_local(CodeGen *cg, const char *name, int offset, int size, int is_unsigned, int is_float, int is_double, int is_const) {
+static void cg_push_local(CodeGen *cg, const char *name, int offset, int size, int is_unsigned, int is_float, int is_double, int is_const, int is_bool) {
     if (cg->nlocals >= cg->caplocals) {
         cg->caplocals = cg->caplocals ? cg->caplocals * 2 : 16;
         cg->locals = (VarInfo *)realloc(cg->locals, (size_t)cg->caplocals * sizeof(VarInfo));
@@ -161,6 +190,7 @@ static void cg_push_local(CodeGen *cg, const char *name, int offset, int size, i
     cg->locals[cg->nlocals].is_float = is_float;
     cg->locals[cg->nlocals].is_double = is_double;
     cg->locals[cg->nlocals].is_const = is_const;
+    cg->locals[cg->nlocals].is_bool = is_bool;
     cg->nlocals++;
 }
 
@@ -176,7 +206,7 @@ static VarInfo *local_info(CodeGen *cg, const char *name) {
     return NULL;
 }
 
-static void cg_push_param(CodeGen *cg, const char *name, int offset, int size, int is_unsigned, int is_float, int is_double, int is_const) {
+static void cg_push_param(CodeGen *cg, const char *name, int offset, int size, int is_unsigned, int is_float, int is_double, int is_const, int is_bool) {
     if (cg->nparams >= cg->capparams) {
         cg->capparams = cg->capparams ? cg->capparams * 2 : 8;
         cg->params = (ParamInfo *)realloc(cg->params, (size_t)cg->capparams * sizeof(ParamInfo));
@@ -188,6 +218,7 @@ static void cg_push_param(CodeGen *cg, const char *name, int offset, int size, i
     cg->params[cg->nparams].is_float = is_float;
     cg->params[cg->nparams].is_double = is_double;
     cg->params[cg->nparams].is_const = is_const;
+    cg->params[cg->nparams].is_bool = is_bool;
     cg->nparams++;
 }
 
@@ -229,7 +260,7 @@ static void collect_locals(CodeGen *cg, Stmt **stmts, int n, int *frame) {
         Stmt *s = stmts[i];
         if (s->kind == STMT_DECL) {
             int sz = s->decl_size > 0 ? s->decl_size : 4;
-            cg_push_local(cg, s->name, *frame, sz, s->decl_unsigned, s->decl_float, s->decl_double, s->decl_const);
+            cg_push_local(cg, s->name, *frame, sz, s->decl_unsigned, s->decl_float, s->decl_double, s->decl_const, s->decl_bool);
             *frame += sz;
         } else if (s->kind == STMT_BLOCK) {
             collect_locals(cg, s->items, s->nitems, frame);
@@ -919,6 +950,9 @@ static void gen_assign(CodeGen *cg, Expr *e) {
     if (expr_is_float(cg, e->r) || expr_is_double(cg, e->r)) {
         emit_conv_to_int(cg, e->r);
     }
+    if (var_is_bool(cg, e->l)) {
+        emit_bool_normalize(cg);
+    }
     cg_emit(cg, "PUSH DWORD A");
     var_addr(cg, e->l);
     cg_emit(cg, "MOV B, A");
@@ -1175,6 +1209,7 @@ static void gen_stmt(CodeGen *cg, Stmt *s) {
                     cg_emit(cg, "MOV B, A");
                     cg_emit(cg, "DST *B, DP0");
                 } else {
+                    if (s->decl_bool) emit_bool_normalize(cg);
                     cg_emit(cg, "PUSH DWORD A");
                     var_addr(cg, &tmp);
                     cg_emit(cg, "MOV B, A");
@@ -1282,7 +1317,8 @@ static void gen_func(CodeGen *cg, Function *f) {
                       f->param_unsigned ? f->param_unsigned[i] : 0,
                       f->param_float ? f->param_float[i] : 0,
                       f->param_double ? f->param_double[i] : 0,
-                      f->param_const ? f->param_const[i] : 0);
+                      f->param_const ? f->param_const[i] : 0,
+                      f->param_bool ? f->param_bool[i] : 0);
     }
     int frame = 4;
     collect_locals(cg, f->body, f->nbody, &frame);
@@ -1295,6 +1331,7 @@ static void gen_func(CodeGen *cg, Function *f) {
         cg_emit(cg, "RER");
         cg_emit(cg, "JMP");
     } else {
+        if (f->ret_bool) emit_bool_normalize(cg);
         if (f->ret_size != 8 && !f->ret_float && !f->ret_double)
             cg_emit(cg, "MOV D1, A");
         cg_emit(cg, "RER");

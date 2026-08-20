@@ -16,6 +16,7 @@ typedef struct {
     int is_const;
     int is_float;
     int is_double;
+    int is_bool;
 } TypeInfo;
 
 static Token *peek(Parser *p, int off) {
@@ -63,7 +64,7 @@ static int is_type(Parser *p) {
            strcmp(t->text,"short")==0 || strcmp(t->text,"long")==0 ||
            strcmp(t->text,"unsigned")==0 || strcmp(t->text,"signed")==0 ||
            strcmp(t->text,"const")==0 || strcmp(t->text,"float")==0 ||
-           strcmp(t->text,"double")==0;
+           strcmp(t->text,"double")==0 || strcmp(t->text,"_Bool")==0;
 }
 
 static TypeInfo parse_type_spec(Parser *p) {
@@ -81,6 +82,7 @@ static TypeInfo parse_type_spec(Parser *p) {
         else if (strcmp(tok->text,"char")==0) { t.size=1; next(p); break; }
         else if (strcmp(tok->text,"int")==0) { t.size=4; next(p); break; }
         else if (strcmp(tok->text,"float")==0) { t.size=4; t.is_float=1; next(p); break; }
+        else if (strcmp(tok->text,"_Bool")==0) { t.size=1; t.is_bool=1; t.is_unsigned=1; next(p); break; }
         else if (strcmp(tok->text,"double")==0) { t.size=8; t.is_double=1; next(p); break; }
         else if (strcmp(tok->text,"void")==0) { t.is_void=1; t.size=0; next(p); break; }
         else break;
@@ -346,6 +348,7 @@ static Stmt *parse_stmt(Parser *p) {
         s->decl_float = ty.is_float;
         s->decl_double = ty.is_double;
         s->decl_const = ty.is_const;
+        s->decl_bool = ty.is_bool;
         if (accept_op(p, "=")) s->expr = parse_assign(p);
         if (!expect_op(p, ";")) { stmt_free(s); return NULL; }
         return s;
@@ -438,6 +441,7 @@ Program parse_program(TokenArray *ta, char **err) {
             f.ret_unsigned = ty.is_unsigned;
             f.ret_float = ty.is_float;
             f.ret_double = ty.is_double;
+            f.ret_bool = ty.is_bool;
             if (!accept_op(&p, ")")) {
                 if (peek(&p,0)->kind == T_KW && strcmp(peek(&p,0)->text,"void")==0 &&
                     peek(&p,1)->kind == T_OP && strcmp(peek(&p,1)->text,")")==0) {
@@ -463,6 +467,8 @@ Program parse_program(TokenArray *ta, char **err) {
                         f.param_double[f.nparams] = pt.is_double;
                         f.param_const = (int *)realloc(f.param_const, (size_t)(f.nparams+1)*sizeof(int));
                         f.param_const[f.nparams] = pt.is_const;
+                        f.param_bool = (int *)realloc(f.param_bool, (size_t)(f.nparams+1)*sizeof(int));
+                        f.param_bool[f.nparams] = pt.is_bool;
                         f.params[f.nparams++] = xstrdup(pn->text);
                         if (!accept_op(&p, ",")) break;
                     }
@@ -488,6 +494,7 @@ Program parse_program(TokenArray *ta, char **err) {
             g.is_float = ty.is_float;
             g.is_double = ty.is_double;
             g.is_const = ty.is_const;
+            g.is_bool = ty.is_bool;
             if (accept_op(&p, "=")) {
                 Token *v = next(&p);
                 if (v->kind != T_NUM) {
