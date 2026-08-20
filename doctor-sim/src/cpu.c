@@ -13,12 +13,14 @@
 #include "devices/uart.h"
 #include "devices/kbc.h"
 #include "devices/disk.h"
+#include "devices/rtc.h"
 
 Device dev_pit;
 Device dev_fb;
 Device dev_uart;
 Device dev_kbc;
 Device dev_disk;
+Device dev_rtc;
 
 void cpu_init(DOCTOR_CPU *cpu) {
 	cpu->code_mem=(uint8_t *)calloc(CODE_SIZE, 1);
@@ -63,6 +65,8 @@ void cpu_init(DOCTOR_CPU *cpu) {
 	device_register(cpu, &dev_kbc);
 	disk_init(&dev_disk);
 	device_register(cpu, &dev_disk);
+	rtc_init(&dev_rtc);
+	device_register(cpu, &dev_rtc);
 
 	return;
 }

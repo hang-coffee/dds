@@ -716,4 +716,4 @@ LET A, BYTE 0
 OUT BYTE 0x3C, A
 ```
 
-（RTC 设备尚未在模拟器中实现；上述端口定义供后续实现与测试使用。）
+（RTC 设备已在模拟器中实现；测试见 `doctor-sim/tests/test_rtc.asm`。）

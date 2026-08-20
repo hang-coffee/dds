@@ -8,7 +8,7 @@
 - [x] 添加 UART 设备（环回/状态/溢出/接收中断 IRQ4=COM1，输出走 Display 层）
 - [x] 添加 AT 兼容键盘 KBC（Set 1 扫描码、8042 命令/状态、电平式中断 IRQ1）
 - [x] 增加 DISK 设备（端口 I/O 块设备，见 `dev_specification.md`）
-- [ ] 增加 RTC 设备
+- [x] 增加 RTC 设备（端口 `0x30`-`0x3D`，IRQ2，见 `dev_specification.md`）
 - [ ] 完善 `manual.md` 与 `dev_specification.md`
 - [x] 提供独立反汇编器 `dda`；dasm 内置反汇编仍为可选的后续增强
 
@@ -131,7 +131,7 @@ sh tests/run_display_test.sh                  # Display 层 + FB 设备（PPM �
   `device_destroy_all` 释放 PIT/FB/UART 私有数据（ASan detect_leaks 验证无泄漏）；
   `device_dump_all` 由 `--dump-devices` 参数触发；`device_reset_all` 仍为预留接口。
 - 已实现 **PIT**、**FB**（帧缓冲）、**UART**、**KBC**（AT 兼容键盘）与 **DISK**（块设备），
-  端口与行为见 `dev_specification.md`。`RTC` 尚未实现。
+  端口与行为见 `dev_specification.md`；RTC 也已实现。
 - **MMIO 未接入**：`device.h` 有 `is_mmio`/`base_mem` 字段，但内存访问路径
   （`mem.h` 的 load/store）没有设备映射逻辑。
 - PIT 细节：真实时间模式（μs/ms/s，TU=00/01/10）用墙钟驱动，与模拟执行速度无关，
