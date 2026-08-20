@@ -18,17 +18,78 @@
 #include "debugger.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <termios.h>
 #include <ctype.h>
 
 volatile bool sim_paused=false;
+volatile unsigned long sim_steps_remaining=0;
+
+static char pause_line[64];
+static size_t pause_len=0;
 
 static struct termios saved_tio;
 static bool tty_active=false;
 
 static void input_restore(void) {
 	if(tty_active) tcsetattr(STDIN_FILENO, TCSANOW, &saved_tio);
+}
+
+
+void input_pause_prompt(void) {
+	fprintf(stderr, "? ");
+	fflush(stderr);
+}
+
+static void pause_reset_line(void) {
+	pause_len=0;
+	pause_line[0]='\0';
+}
+
+static void pause_handle_command(DOCTOR_CPU *cpu, const char *cmd) {
+	while(*cmd && isspace((unsigned char)*cmd)) cmd++;
+	if(*cmd=='\0') return;
+
+	// stack
+	if(strncmp(cmd, "stack", 5)==0 && (cmd[5]=='\0' || isspace((unsigned char)cmd[5]))) {
+		dump_stack(cpu);
+		return;
+	}
+
+	// d / dump
+	if((cmd[0]=='d' || cmd[0]=='D') && (cmd[1]=='\0' || isspace((unsigned char)cmd[1]))) {
+		fprintf(stderr, "\n[KBD] 寄存器转储:\n");
+		exe_err(cpu);
+		fprintf(stderr, "\n");
+		return;
+	}
+
+	// q / quit
+	if((cmd[0]=='q' || cmd[0]=='Q') && (cmd[1]=='\0' || isspace((unsigned char)cmd[1]))) {
+		fprintf(stderr, "\n[KBD] 退出\n");
+		input_restore();
+		exit(0);
+	}
+
+	// s / step [num]
+	if((cmd[0]=='s' || cmd[0]=='S') && (cmd[1]=='\0' || isspace((unsigned char)cmd[1]))) {
+		const char *p=cmd+1;
+		while(*p && isspace((unsigned char)*p)) p++;
+		unsigned long n=1;
+		if(*p!='\0') {
+			char *end=NULL;
+			errno=0;
+			n=strtoul(p, &end, 0);
+			if(errno!=0 || end==p) n=1;
+		}
+		sim_steps_remaining=n;
+		fprintf(stderr, "Step %lu.\n", n);
+		return;
+	}
+
+	fprintf(stderr, "未知命令: %s\n", cmd);
 }
 
 void input_init(void) {
@@ -42,7 +103,7 @@ void input_init(void) {
 	if(tcsetattr(STDIN_FILENO, TCSANOW, &raw)!=0) return;
 	tty_active=true;
 	atexit(input_restore);
-	fprintf(stderr, "[KBD] 键盘输入已连接 (Ctrl+C 暂停/恢复, 暂停时 d 寄存器转储, q 退出)\n");
+	fprintf(stderr, "[KBD] 键盘输入已连接 (Ctrl+C 暂停/恢复, 暂停时 d/s/stack/q)\n");
 	return;
 }
 
@@ -142,26 +203,64 @@ static void handle_key(DOCTOR_CPU *cpu, uint8_t ch) {
 	}
 
 	// 普通状态
-	if(ch==0x03) {						// 安全键 Ctrl+C
+	if(ch==0x03) {// 安全键 Ctrl+C
 		sim_paused=!sim_paused;
-		fprintf(stderr, sim_paused
-			? "\n[KBD] 暂停（Ctrl+C 恢复，q 退出）\n"
-			: "\n[KBD] 继续\n");
+		if(sim_paused) {
+			pause_reset_line();
+			sim_steps_remaining=0;
+			fprintf(stderr, "\n[KBD] 暂停（Ctrl+C 恢复，q 退出）\n");
+			input_pause_prompt();
+		} else {
+			sim_steps_remaining=0;
+			fprintf(stderr, "\n[KBD] 继续\n");
+		}
 		return;
 	}
 	if(sim_paused) {
-		if(ch=='q' || ch=='Q') {		// 暂停时 q 退出
+		// 暂停时立即处理单字符命令（兼容旧的 d/q 操作）
+		if(pause_len==0 && (ch=='d' || ch=='D')) {
+			fprintf(stderr, "\n[KBD] 寄存器转储:\n");
+			exe_err(cpu);
+			fprintf(stderr, "\n");
+			input_pause_prompt();
+			return;
+		}
+		if(pause_len==0 && (ch=='q' || ch=='Q')) {
 			fprintf(stderr, "\n[KBD] 退出\n");
 			input_restore();
 			exit(0);
 		}
-		if(ch=='d' || ch=='D') {		// 暂停时 d：显示寄存器转储
-			fprintf(stderr, "\n[KBD] 寄存器转储:\n");
-			exe_err(cpu);
+
+		if(ch=='\r' || ch=='\n') {
+			pause_line[pause_len]='\0';
 			fprintf(stderr, "\n");
+			pause_handle_command(cpu, pause_line);
+			pause_reset_line();
+			// 如果还有剩余单步步数，等 cpu_run 执行完后再显示提示符
+			if(sim_steps_remaining==0) {
+				input_pause_prompt();
+			}
 			return;
 		}
-		return;							// 暂停期间其它键不转发
+		if(ch==8 || ch==127) {// Backspace
+			if(pause_len>0) {
+				pause_len--;
+				pause_line[pause_len]='\0';
+				fprintf(stderr, "\b \b");
+				fflush(stderr);
+			}
+			return;
+		}
+		if(ch>=32 && ch<127) {
+			if(pause_len < sizeof(pause_line)-1) {
+				pause_line[pause_len++]=ch;
+				pause_line[pause_len]='\0';
+				fputc(ch, stderr);
+				fflush(stderr);
+			}
+			return;
+		}
+		return;// 暂停期间其它控制键不转发
 	}
 	switch(ch) {
 		case 0x0D: kbd_send_key(cpu, 0x1C, false); return;		// Enter

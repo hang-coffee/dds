@@ -34,4 +34,17 @@ fprintf(stderr, "FP0=0x%08X FP1=0x%08X FP2=0x%08X FP3=0x%08X FP4=0x%08X FP5=0x%0
 	return;
 }
 
+void dump_stack(DOCTOR_CPU *cpu) {
+	uint32_t s=*op2reg(cpu, REG_S);
+	fprintf(stderr, "Stack around S=0x%08X:\n", s);
+	for(int off=-8; off<=8; off++) {
+		uint32_t addr=(uint32_t)((int64_t)s + off);
+		uint8_t b=load_from_mem(cpu, addr, MEM_TYPE_DATA);
+		if(off==0)
+			fprintf(stderr, "S=0x%08X --> %02X\n", s, b);
+		else
+			fprintf(stderr, "            %02X\n", b);
+	}
+}
+
 

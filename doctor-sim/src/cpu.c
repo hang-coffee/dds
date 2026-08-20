@@ -105,7 +105,8 @@ void cpu_run(DOCTOR_CPU *cpu) {
 		// 宿主键盘输入 → KBC 设备（含安全键处理）
 		input_poll(cpu);
 		// 暂停：冻结模拟（Ctrl+C 暂停/恢复，见 input.c）
-		if(sim_paused) {
+		// 若暂停且有剩余单步步数，则继续执行一步
+		if(sim_paused && sim_steps_remaining==0) {
 			usleep(1000);
 			continue;
 		}
@@ -192,6 +193,14 @@ void cpu_run(DOCTOR_CPU *cpu) {
 				break;
 			}
 			// hr==-1(中断关闭) / -2(嵌套拒绝)：保留挂起位，等待下次再试
+		}
+
+		// 暂停单步模式：每经过一次主循环递减一步
+		if(sim_paused && sim_steps_remaining>0) {
+			sim_steps_remaining--;
+			if(sim_steps_remaining==0) {
+				input_pause_prompt();
+			}
 		}
 	}
 	fprintf(stderr, "INFO: step_cnt=%lu\n", step_cnt);

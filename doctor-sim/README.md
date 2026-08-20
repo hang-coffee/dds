@@ -42,8 +42,12 @@ make
 ./build/bin/doctor-sim --display fb ...      # 帧缓冲保留内存（程序化消费）
 
 # 宿主键盘输入（stdin 为终端时自动启用，转发为 KBC 的 Set 1 扫描码）
-#   安全键: 第一次 Ctrl+C 暂停模拟（输入不再转发）；再次 Ctrl+C 恢复；
-#           暂停时按 d 显示当前寄存器转储；按 q 退出
+#   安全键: 第一次 Ctrl+C 暂停模拟（输入不再转发）；再次 Ctrl+C 恢复。
+#   暂停时支持命令:
+#     d           显示当前寄存器转储
+#     s [num]     执行 num 步；不带 num 时执行 1 步
+#     stack       显示当前栈 ±8 BYTE 的内存
+#     q           退出
 ./build/bin/doctor-sim -f code demo_code.bin data demo_data.bin
 ```
 
@@ -68,7 +72,7 @@ sh tests/run_display_test.sh                  # Display 层 + FB 设备（PPM �
 ./build/bin/doctor-sim -f code demo_code.bin data demo_data.bin
 # 终端打字 → 每个按键经 KBC 中断直接回显字符本身（Set 1 扫描码翻译，
 #   支持 Shift 大小写/上档、Enter 换行、Backspace 退格、Tab 制表）
-# Ctrl+C 暂停/恢复；暂停时 d 寄存器转储；q 退出
+# Ctrl+C 暂停/恢复；暂停时支持 d / s [num] / stack / q
 ```
 另：`tests/test_dasm_features.asm` 端到端覆盖 dasm 新语法
 （`*reg+N` 偏移 / `PUSH P` / `pushp` / NZ 拼接 / 表达式）与解码器偏移支持；
