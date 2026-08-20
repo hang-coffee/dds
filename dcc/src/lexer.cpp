@@ -34,6 +34,7 @@ Token Lexer::make(TokenKind k, const std::string& txt) {
 	t.text = txt;
 	t.ival = 0;
 	t.line = line_;
+	t.is_long = false;
 	return t;
 }
 
@@ -135,21 +136,34 @@ std::vector<Token> Lexer::tokenize() {
 				if (peek() == '+' || peek() == '-') num += advance();
 				while (std::isdigit(static_cast<unsigned char>(peek()))) num += advance();
 			}
-			if (peek() == 'f' || peek() == 'F' || peek() == 'l' || peek() == 'L') {
+			bool long_suffix = false;
+			if (peek() == 'f' || peek() == 'F') {
 				is_float = true;
-				num += advance();
+				advance();
+			} else if (peek() == 'l' || peek() == 'L') {
+				if (is_float) {
+					// 1.0L / 1e10L：long double
+					is_float = true;
+					advance();
+				} else {
+					// 1L / 0x10L：long 整数
+					long_suffix = true;
+					advance();
+				}
 			}
 			if (is_float) {
 				Token t = make(TOK_FLOATLIT, src_.substr(start, pos_ - start));
 				t.fval = std::strtod(num.c_str(), nullptr);
 				toks.push_back(t);
-			} else if (num.size() > 1 && num[0] == '0') {	// 八进制
+			} else if (num.size() > 1 && num[0] == '0' && !long_suffix) {	// 八进制
 				Token t = make(TOK_NUMBER, src_.substr(start, pos_ - start));
 				t.ival = std::strtoll(num.c_str(), nullptr, 8);
+				t.is_long = long_suffix;
 				toks.push_back(t);
 			} else {
 				Token t = make(TOK_NUMBER, src_.substr(start, pos_ - start));
 				t.ival = std::strtoll(num.c_str(), nullptr, 10);
+				t.is_long = long_suffix;
 				toks.push_back(t);
 			}
 			continue;

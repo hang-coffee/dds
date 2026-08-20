@@ -9,7 +9,7 @@ typedef char *va_list;
 #define va_start(ap, last) __builtin_va_start(ap, last)
 
 /* va_arg 由编译器内建展开：读取当前参数并前进 sizeof(type) 字节 */
-#define va_arg(ap, type) __builtin_va_arg(ap, sizeof(type))
+#define va_arg(ap, type) __builtin_va_arg(ap, type)
 
 /* 本实现无需清理 */
 #define va_end(ap) ((ap) = (ap))

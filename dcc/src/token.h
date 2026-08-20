@@ -41,6 +41,7 @@ struct Token {
 	double fval;			// 浮点字面量值
 	std::string sval;		// 字符串内容
 	int line;				// 行号
+	bool is_long;			// 整数字面量带 L/l 后缀（long）
 };
 
 } // namespace dcc

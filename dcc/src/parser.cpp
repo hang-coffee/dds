@@ -53,6 +53,9 @@ long long Parser::compute_size(const Type& t) {
 		case B_BOOL: return 1;
 		case B_SHORT: return 2;
 		case B_LONG: return 8;	// long 8 字节（64 位）
+		case B_DOUBLE: return 8;
+		case B_LDOUBLE: return 8;
+		case B_FLOAT: return 4;
 		default: return 4;
 	}
 }
@@ -69,6 +72,7 @@ Expr* Parser::parse_sizeof() {
 		advance();
 		// 尝试解析为类型
 		if (is(TOK_INT) || is(TOK_SHORT) || is(TOK_LONG) || is(TOK_CHAR) || is(TOK_BOOL) || is(TOK_VOID) ||
+		    is(TOK_FLOAT) || is(TOK_DOUBLE) ||
 		    is(TOK_SIGNED) || is(TOK_UNSIGNED) || is(TOK_CONST) || is(TOK_STRUCT) ||
 		    is(TOK_UNION) || is(TOK_ENUM) || (is(TOK_IDENT) && env_.has_typedef(peek().text))) {
 			Type t = parse_type();
@@ -524,23 +528,52 @@ void Parser::parse_global(Program& prog) {
 		gv.has_init = false;
 		gv.label_init.clear();
 		gv.has_str_init = false;
+		gv.has_init_list = false;
+		gv.init_list.clear();
 		gv.offset = 0;
 		gv.label = "var_" + name;
 		gv.name = name;
 		gv.is_extern = is_extern;
 		gv.is_static = is_static;
 
-		if (is(TOK_LBRACKET)) {	// 数组
+		if (is(TOK_LBRACKET)) {// 数组
 			advance();
-			if (!is(TOK_NUMBER)) { error("期望数组长度", peek()); return; }
-			long long len = advance().ival;
 			gv.is_array = true;
-			gv.array_len = (int)len;
+			if (is(TOK_NUMBER)) {
+				gv.array_len = (int)advance().ival;
+			} else if (is(TOK_RBRACKET)) {
+				gv.array_len = 0;
+			} else {
+				error("期望数组长度", peek()); return;
+			}
 			if (!expect(TOK_RBRACKET, "']'")) return;
 		}
 		if (accept(TOK_ASSIGN)) {
 			if (gv.is_extern) { error("extern 变量不能有初始化器", peek()); return; }
-			if (is(TOK_STRING)) {
+			if (is(TOK_LBRACE)) {
+				advance();
+				gv.has_init_list = true;
+				while (!is(TOK_RBRACE) && !is(TOK_EOF)) {
+					Expr* e = parse_assign();
+					if (e && e->kind == E_INT) {
+						gv.init_list.push_back(e->ival);
+					} else if (e && e->kind == E_FLOAT) {
+						float fv = (float)e->fval;
+						uint32_t bits;
+						memcpy(&bits, &fv, sizeof(bits));
+						gv.init_list.push_back((long long)bits);
+					} else {
+						error("全局数组初始化器仅支持常量", peek());
+					}
+					delete e;
+					if (!accept(TOK_COMMA)) break;
+				}
+				if (!expect(TOK_RBRACE, "'}'")) return;
+				if (gv.is_array) {
+					if (gv.array_len == 0) gv.array_len = (int)gv.init_list.size();
+					else if ((int)gv.init_list.size() > gv.array_len) error("数组初始化器元素过多", peek());
+				}
+			} else if (is(TOK_STRING)) {
 				gv.has_str_init = true;
 				gv.str_init = advance().sval;
 			} else {
@@ -637,16 +670,35 @@ VarDecl Parser::parse_var_decl(Type t, const std::string& name) {
 	d.array_len = 0;
 	d.init = nullptr;
 	d.has_str_init = false;
+	d.has_init_list = false;
 	d.is_static = false;
 	if (is(TOK_LBRACKET)) {
 		advance();
-		if (!is(TOK_NUMBER)) { error("期望数组长度", peek()); return d; }
-		long long len = advance().ival;
 		d.is_array = true;
-		d.array_len = (int)len;
+		if (is(TOK_NUMBER)) {
+			d.array_len = (int)advance().ival;
+		} else if (is(TOK_RBRACKET)) {
+			d.array_len = 0;
+		} else {
+			error("期望数组长度", peek()); return d;
+		}
 		if (!expect(TOK_RBRACKET, "']'")) return d;
 	}
 	if (accept(TOK_ASSIGN)) {
+		if (is(TOK_LBRACE)) {
+			advance();
+			d.has_init_list = true;
+			while (!is(TOK_RBRACE) && !is(TOK_EOF)) {
+				d.init_list.push_back(parse_assign());
+				if (!accept(TOK_COMMA)) break;
+			}
+			if (!expect(TOK_RBRACE, "'}'")) return d;
+			if (d.is_array) {
+				if (d.array_len == 0) d.array_len = (int)d.init_list.size();
+				else if ((int)d.init_list.size() > d.array_len) error("数组初始化器元素过多", peek());
+			}
+			return d;
+		}
 		if (is(TOK_STRING)) {
 			if (d.is_array) {
 				// char s[n] = "abc"：字符串拷贝
@@ -1066,6 +1118,25 @@ Expr* Parser::parse_postfix() {
 				Type ct = parser_expr_type(e);
 				if (ct.is_func_ptr_type()) n->type = ct.func_ret_type();
 			}
+			if (n->name == "__builtin_va_arg") {
+				// 第二个参数是类型名（va_arg(ap, long/double/...)，由宏直接传入类型）
+				if (!is(TOK_RPAREN)) {
+					n->args.push_back(parse_assign());
+					if (accept(TOK_COMMA)) {
+						Type vt = parse_type();
+						while (is(TOK_STAR)) { advance(); vt.ptr_depth++; }
+						n->type = vt;
+						Expr* sz = new Expr;
+						sz->kind = E_INT;
+						sz->ival = compute_size(vt);
+						sz->type = type_int();
+						n->args.push_back(sz);
+					}
+				}
+				if (!expect(TOK_RPAREN, "')'")) { delete n; return nullptr; }
+				e = n;
+				continue;
+			}
 			if (!is(TOK_RPAREN)) {
 				for (;;) {
 					n->args.push_back(parse_assign());
@@ -1094,10 +1165,11 @@ Expr* Parser::parse_postfix() {
 
 Expr* Parser::parse_primary() {
 	if (is(TOK_NUMBER)) {
+		Token t = advance();
 		Expr* e = new Expr;
 		e->kind = E_INT;
-		e->ival = advance().ival;
-		e->type = type_int();
+		e->ival = t.ival;
+		e->type = (t.is_long || t.ival > 0x7fffffffLL || t.ival < -0x80000000LL) ? type_long() : type_int();
 		return e;
 	}
 	if (is(TOK_FLOATLIT)) {

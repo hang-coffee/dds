@@ -160,7 +160,33 @@ void CodeGen::gen_global(GlobalVar& g) {
 	data_ += g.label + ":\n";
 	if (g.is_array) {
 		int size = g.array_len * tsize(g.type);
-		if (g.has_str_init) {
+		if (g.has_init_list) {
+			int elem_size = tsize(g.type);
+			for (size_t i = 0; i < g.init_list.size(); i++) {
+				uint32_t addr = g.offset + (uint32_t)(i * elem_size);
+				long long v = g.init_list[i];
+				if (elem_size == 1) {
+					char b[32];
+					snprintf(b, sizeof(b), "\tDB %u, 0x%02llX", (unsigned)addr, v & 0xff);
+					data_ += b; data_ += "\n";
+				} else if (elem_size == 2) {
+					data_ += "\tDW " + std::to_string(addr) + ", " + std::to_string(v) + "\n";
+				} else if (elem_size == 8) {
+					uint32_t lo = (uint32_t)v;
+					uint32_t hi = (uint32_t)((uint64_t)v >> 32);
+					char b[64];
+					snprintf(b, sizeof(b), "\tDD %u, 0x%08X", (unsigned)addr, lo);
+					data_ += b; data_ += "\n";
+					snprintf(b, sizeof(b), "\tDD %u, 0x%08X", (unsigned)(addr + 4), hi);
+					data_ += b; data_ += "\n";
+				} else {
+					data_ += "\tDD " + std::to_string(addr) + ", " + std::to_string(v) + "\n";
+				}
+			}
+			size_t remaining = (size_t)g.array_len - g.init_list.size();
+			if (remaining > 0) data_ += "\tRESB " + std::to_string(remaining * elem_size) + "\n";
+			data_off_ += (uint32_t)(g.array_len * elem_size);
+		} else if (g.has_str_init) {
 			// char 数组字符串初始化：先逐字节 DB，再 RESB 补齐
 			size_t n = g.str_init.size() + 1;	// +NUL
 			if (n > (size_t)g.array_len) n = g.array_len;
@@ -262,6 +288,8 @@ void CodeGen::gen_func(Function& f) {
 						gv.has_init = dd.init != nullptr;
 						gv.label_init.clear();
 						gv.has_str_init = dd.has_str_init;
+						gv.has_init_list = dd.has_init_list;
+						gv.init_list.clear();
 						gv.str_init = dd.str_init;
 						gv.offset = data_off_;
 						gv.label = label;
@@ -601,6 +629,20 @@ void CodeGen::gen_decl(Stmt* s) {
 		}
 		return;
 	}
+	// 数组初始化列表 { ... }
+	if (d.is_array && d.has_init_list) {
+		const Symbol* sym = symtab_.lookup(d.name);
+		if (!sym) { error("声明符号缺失: " + d.name); return; }
+		int elem_size = tsize(d.type);
+		for (size_t i = 0; i < d.init_list.size(); i++) {
+			gen_var_addr_to_b(*sym);
+			if (i > 0) emit_t("ADD DWORD B, " + std::to_string(i * elem_size));
+			gen_expr(d.init_list[i]);
+			emit_store(d.type);
+		}
+		return;
+	}
+
 	// 数组字符串初始化（char s[n] = "..."）
 	if (d.has_str_init && type_is_char(d.type)) {
 		std::string src = new_str_label();
@@ -700,10 +742,11 @@ return s ? s->type : e->type;
 }
 case E_STR:
 return type_str();
-case E_INT:
-// 超出 int32 范围的整数字面量按 long（64 位）处理
-if (e->ival > INT32_MAX || e->ival < INT32_MIN) return type_long();
-return type_int();
+	case E_INT:
+		// L/l 后缀或超出 int32 范围的整数字面量按 long（64 位）处理
+		if (e->type.is_long()) return type_long();
+		if (e->ival > INT32_MAX || e->ival < INT32_MIN) return type_long();
+		return type_int();
 case E_FLOAT:
 return e->type;
 case E_BINOP: {
@@ -746,7 +789,9 @@ case E_ASSIGN:
 return resolve_type(e->l);
 case E_COND:
 return resolve_type(e->l);
-case E_CALL: {
+	case E_CALL: {
+		// __builtin_va_arg 的类型由 parser 根据第二个参数（类型名）设置
+		if (e->name == "__builtin_va_arg") return e->type;
 // 间接调用：通过函数指针表达式得到返回类型
 if (e->l) {
 Type ct = resolve_type(e->l);
@@ -993,7 +1038,7 @@ void CodeGen::gen_expr(Expr* e) {
 		case E_INT:
 			emit_t("LET A, DWORD " + std::to_string(e->ival));
 			// 超出 int32 范围的字面量：同时给出高字（值按 64 位二补码）
-			if (e->ival > INT32_MAX || e->ival < INT32_MIN) {
+			if (e->type.is_long() || e->ival > INT32_MAX || e->ival < INT32_MIN) {
 				emit_t("LET D1, DWORD " + std::to_string((int32_t)(e->ival >> 32)));
 			}
 			break;
@@ -1631,7 +1676,7 @@ return;
 }
 gen_lvalue_addr(e->args[0]);// B = &ap
 emit_t("MOV A, F");
-emit_t("SUB DWORD A, " + std::to_string(cur_func_named_bytes_ + 7));
+emit_t("SUB DWORD A, " + std::to_string(cur_func_named_bytes_ + 11));
 emit_t("ST DWORD *B, A");
 return;
 }
@@ -1649,11 +1694,8 @@ gen_lvalue_addr(e->args[0]);// B = &ap
 emit_t("PUSH DWORD B");// [&ap]
 emit_t("LR DWORD A, *B");// A = ap
 emit_t("PUSH DWORD A");// [&ap][old]
-if (sz == 8) {
+// 所有可变参数槽位统一按 8 字节存放，因此 ap 每次前进 8 字节
 emit_t("LET A, DWORD 8");
-} else {
-emit_t("LET A, DWORD " + std::to_string(sz));
-}
 emit_t("POP DWORD B");// B = old
 emit_t("PUSH DWORD B");// [&ap][old]（保存 old 指针）
 emit_t("SUB DWORD B, A");// B = old - size
@@ -1662,8 +1704,7 @@ emit_t("POP DWORD C");// C = old
 emit_t("PUSH DWORD A");// [&ap][new]
 emit_t("MOV A, C");// A = old
 if (sz == 8) {
-// long：低字在 old，高字在 old+4
-emit_t("PUSH DWORD A");
+// long：低字在 old，高字在 old+4；old 已保存在 C，无需再压栈
 emit_t("LR DWORD A, *A");
 emit_t("PUSH DWORD A");// 暂存低字
 emit_t("MOV A, C");
@@ -1677,6 +1718,10 @@ emit_t("LR DWORD A, *A");
 emit_t("POP DWORD C");// C = new ap
 emit_t("POP DWORD B");// B = &ap
 emit_t("ST DWORD *B, C");// ap = new
+// double/long double 可变参数：把 A:D1 中的 64 位位模式装入 DP0
+if (e->type.is_double() || e->type.is_ldouble()) {
+emit_dp_load_a_d1_to_dp0();
+}
 return;
 }
 Expr* callee = e->l;
@@ -1762,10 +1807,43 @@ bytes += 4;
 };
 if (fn && fn->is_vararg) {
 // 可变参数调用：先逆序压可变参数，再压命名参数。
-// 这样第一个可变参数紧邻命名参数下方，地址 = F - (命名参数总槽位字节 + 7)，
-// va_arg 每次读取后向低地址移动。
+// 所有可变参数槽位统一为 8 字节，因此 va_start 可类型无关地定位第一个可变参数。
 for (size_t j = e->args.size(); j-- > fn->params.size(); ) {
-push_arg(e->args[j], resolve_type(e->args[j]), argbytes);
+Expr* a = e->args[j];
+Type at = resolve_type(a);
+if (at.is_fp() && (at.is_double() || at.is_ldouble())) {
+gen_dp_expr(a);
+emit_dp_store_dp0_to_a_d1();
+emit_t("PUSH DWORD A");
+emit_t("PUSH DWORD D1");
+} else if (at.is_long()) {
+if (resolve_type(a).is_fp()) {
+gen_fp_expr(a);
+emit_t("F2I A, FP0");
+emit_d1_signext();
+} else {
+gen_expr(a);
+if (!resolve_type(a).is_long()) {
+if (resolve_type(a).is_unsigned_scalar()) emit_t("ZERO D1");
+else emit_d1_signext();
+}
+}
+emit_t("PUSH DWORD A");
+emit_t("PUSH DWORD D1");
+} else {
+if (resolve_type(a).is_fp()) {
+gen_fp_expr(a);
+emit_t("F2I A, FP0");
+} else {
+gen_expr(a);
+}
+// 整数/指针/float 统一扩展为 8 字节槽位
+if (resolve_type(a).is_unsigned_scalar()) emit_t("ZERO D1");
+else emit_d1_signext();
+emit_t("PUSH DWORD A");
+emit_t("PUSH DWORD D1");
+}
+argbytes += 8;
 }
 for (size_t i = 0; i < fn->params.size() && i < e->args.size(); i++) {
 push_arg(e->args[i], fn->params[i], argbytes);

@@ -49,7 +49,7 @@
 | `unsigned char` | 1 字节 | 无符号 | |
 | `struct S` / `union U` | 布局尺寸 | — | 成员顺序布局（union 取最大成员） |
 | `enum E` | 4 字节 | 无符号 int | 常量可在编译期使用 |
-| `void *` | 4 字节 | 无符号地址 | 通用指针；不能解引用，与其它指针互转需显式转换 |
+| `void *` | 4 字节 | 无符号地址 | 通用指针；支持解引用（按 DWORD 访问），与其它指针互转需显式转换 |
 | `int *` / `char *` 等 | 4 字节 | 无符号地址 | 指针；指向类型决定解引用尺寸与算术缩放 |
 | `const T` | 同 T | — | 只读限定；赋值给 const 变量报错 |
 
@@ -278,7 +278,7 @@ char *greet(void) { return "hi"; }   /* 返回 char* */
   通过函数指针间接调用（`fp(args)` 与 `(*fp)(args)`）；不支持函数指针数组、返回函数指针的复杂声明符
   （可用 typedef 间接表达）。
 - 可变参数：支持 `...` 与 `<stdarg.h>`（`va_list`/`va_start`/`va_arg`/`va_end`/`va_copy`）；
-  当前可变参数按 4 字节槽位传递，适合 `int`/指针/`char*` 等。
+  可变参数槽位统一按 8 字节传递，支持 `int`/指针/`char*`/`long`/`double` 等。
 - 不支持：递归深度无限制（受栈空间约束）。
 
 ### 6.1 函数原型与分离编译
@@ -382,7 +382,7 @@ int main(void) { return add(g_count, 2); }
 | `short`/`long`/`unsigned` 变体 | 支持 `short`/`int` + `signed`/`unsigned`；`long` 为 64 位（不支持 `long long`） |
 | `struct`/`union`/`enum`/`typedef` | 支持（含嵌套/指针/整体赋值；无位域） |
 | 预处理器 | `#include`/`#define`/`#ifdef`/`#ifndef`/`#else`/`#endif`（无 `#if` 表达式） |
-| `{}` 数组初始化列表 | 不支持 |
+| `{}` 数组初始化列表 | 支持（全局/局部数组；长度可省略） |
 | 移位右操作数任意 | 必须为编译期常量 |
 | `>>` 对有符号右移 | 算术右移（MSR）；无符号逻辑右移（SHR） |
 | 类型转换 `(t)x` | 支持（char 截断；int/unsigned/指针重解释） |

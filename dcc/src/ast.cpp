@@ -19,6 +19,7 @@ Stmt::~Stmt() {
 	delete init;
 	delete init_stmt;
 	delete inc;
+	for (Expr* e : decl.init_list) delete e;
 	for (Stmt* s : items) delete s;
 	delete next;
 }
