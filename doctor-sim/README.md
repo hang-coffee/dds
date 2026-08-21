@@ -3,7 +3,7 @@
 ## TODO
 - [x] 完善MPU功能（内存护栏：CBASE/CLIMIT/DBASE/DLIMIT 越界检查 → #GP/#STACK）
 - [x] 接入异常体系（#DIV/#II/#STACK/#GP/#NMI 触发与派发、XAR、SVC 特权级切换）
-- [x] 实现基础 69 条指令（0x00–0x44）及 DFE/DDE 浮点扩展（0x45–0x66）
+- [x] 实现基础 69 条指令（0x00–0x44）及 DFE/DDE/DXE 浮点扩展（0x45–0x7A）
 - [x] 完善 Display 层（后端抽象：tty/ansi/ppm/fb，FB 设备已接入）
 - [x] 添加 UART 设备（环回/状态/溢出/接收中断 IRQ4=COM1，输出走 Display 层）
 - [x] 添加 AT 兼容键盘 KBC（Set 1 扫描码、8042 命令/状态、电平式中断 IRQ1）
@@ -96,6 +96,7 @@ sh tests/run_display_test.sh                  # Display 层 + FB 设备（PPM �
 | 0x00–0x44（基础 69 条） | **全部实现** | 含 SVC(0x40)、MNE/NEG 的 NZ 变体 |
 | 0x45–0x54（DFE） | **全部实现** | 单精度浮点扩展 |
 | 0x55–0x66（DDE） | **全部实现** | 双精度浮点扩展 |
+| 0x67–0x7A（DXE） | **全部实现** | 80 位扩展精度浮点扩展 |
 
 #### A2. 中断 / 异常 / 特权级
 - **异常体系已接入**：`raise_exception()` 触发 #DIV(0x00)/#II(0x01)/#STACK(0x02)/#GP(0x03)/

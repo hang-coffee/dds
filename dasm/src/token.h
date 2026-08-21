@@ -111,6 +111,26 @@ enum token_type {
     TOK_INSTR_DPOP,
     TOK_INSTR_F2D,
     TOK_INSTR_D2F,
+    TOK_INSTR_EMOV,
+    TOK_INSTR_ELDI,
+    TOK_INSTR_ELD,
+    TOK_INSTR_EST,
+    TOK_INSTR_EADD,
+    TOK_INSTR_ESUB,
+    TOK_INSTR_EMUL,
+    TOK_INSTR_EDIV,
+    TOK_INSTR_ESQRT,
+    TOK_INSTR_ENEG,
+    TOK_INSTR_EABS,
+    TOK_INSTR_ECMP,
+    TOK_INSTR_E2I,
+    TOK_INSTR_I2E,
+    TOK_INSTR_F2E,
+    TOK_INSTR_E2F,
+    TOK_INSTR_D2E,
+    TOK_INSTR_E2D,
+    TOK_INSTR_EPUSH,
+    TOK_INSTR_EPOP,
 
     TOK_PSEUDO_SECTION,
     TOK_PSEUDO_DB,
@@ -158,6 +178,14 @@ enum token_type {
     TOK_REG_DP5,
     TOK_REG_DP6,
     TOK_REG_DP7,
+    TOK_REG_EP0,
+    TOK_REG_EP1,
+    TOK_REG_EP2,
+    TOK_REG_EP3,
+    TOK_REG_EP4,
+    TOK_REG_EP5,
+    TOK_REG_EP6,
+    TOK_REG_EP7,
 
     TOK_SYSREG_CBASE,
     TOK_SYSREG_CLIMIT,
@@ -189,6 +217,7 @@ struct token {
     int line_no;
     int col_no;
     unsigned long long value;
+    unsigned long long value_hi;   // 80 位立即数高 16 位（ELDI），通常为 0
     std::vector<unsigned char> bytes;
 };
 

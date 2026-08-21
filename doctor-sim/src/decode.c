@@ -14,7 +14,8 @@ void instr_init(Decoded_instr *instr) {
 	instr->has_rep=0;
 	instr->i_type=0;
 	instr->imm=0;
-instr->imm_hi=0;
+	instr->imm_hi=0;
+	instr->imm_hi2=0;
 	instr->op1=0;
 	instr->op2=0;
 	instr->op_size=0;
@@ -77,6 +78,26 @@ int decode(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 	instr->op2=(membyte&0x0f);							// bit 3-0 --> op2
 	needed_bytes--;
 	if(needed_bytes==0) return (int)(pos-cpu->P);
+	// ELDI：80 位立即数（Byte2 后跟 10 字节 Little-Endian）
+	if(instr->opcode==ELDI) {
+		if(needed_bytes!=10 || pos+10>CODE_SIZE) return -1;
+		instr->imm=0;
+		instr->imm_hi=0;
+		instr->imm_hi2=0;
+		for(int i=0; i<4; i++) {
+			fetch_byte(cpu, &pos, &membyte);
+			instr->imm|=((uint32_t)membyte)<<(i*8);
+		}
+		for(int i=0; i<4; i++) {
+			fetch_byte(cpu, &pos, &membyte);
+			instr->imm_hi|=((uint32_t)membyte)<<(i*8);
+		}
+		for(int i=0; i<2; i++) {
+			fetch_byte(cpu, &pos, &membyte);
+			instr->imm_hi2|=((uint32_t)membyte)<<(i*8);
+		}
+		return (int)(pos-cpu->P);
+	}
 	if(instr->opcode!=SR && instr->op_size==0) return -1;					// #II
 	// LR/ST 的 *reg+N 指针偏移：剩余字节即为偏移立即数（宽度=尺寸），
 	// 与汇编器 `LR DWORD A, *R+4` / `ST DWORD *I+0x10, B` 的编码对应。

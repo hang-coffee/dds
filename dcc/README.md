@@ -96,9 +96,9 @@ make test-elf      # 等价于 sh run_elf_test.sh
 sh run_elf_test.sh # -m elf 冒烟测试
 ```
 
-`make test` 覆盖 24 个测试场景，包括：函数调用/多参数、char/short/long/long long、
-signed/unsigned 类型、浮点与转换、`_Bool`、指针与数组、多维数组、字符串、结构体、
-typedef/union/enum、函数指针、`void *`、可变参数、`switch`/`do`/`goto`、`static`/`extern`/
+`make test` 覆盖 31 个测试场景，包括：函数调用/多参数、char/short/long/long long、
+signed/unsigned 类型、浮点与转换（含 80 位 `long double`）、`_Bool`、指针与数组、多维数组、字符串、结构体（含匿名 struct/union）、
+`switch` case 穿透（fallthrough）、typedef/union/enum、函数指针、`void *`、可变参数、`switch`/`do`/`goto`、`static`/`extern`/
 `inline`、`__interrupt__` ISR、内联汇编与寄存器直访、预处理（`#include`/`#define`/
 `#if`/`#elif`/`#ifdef`/`#ifndef`）、分离编译和自动查找 lib 实现。
 
@@ -142,7 +142,7 @@ dcc/
 - **类型**：`int`（4 字节）、`unsigned int`、`short`（2 字节）、
   `long` / `long long`（8 字节，64 位）、`char`（1 字节，裸 `char` 按无符号 0-255）、
   `signed char`、`unsigned char`、`_Bool`、`float`（4 字节 DFE）、
-  `double` / `long double`（8 字节 DDE）、`void *`、指针、`struct`、`union`、
+  `double`（8 字节 DDE）、`long double`（10 字节 DXE）、`void *`、指针、`struct`、`union`、
   `enum`、`typedef`、`const` / `volatile` / `restrict`
 - **寄存器直访**：`__reg_A` / `__reg_B` / `__reg_C` / `__reg_D1` / `__reg_D2` /
   `__reg_X` / `__reg_I` / `__reg_S` / `__reg_R` / `__reg_F` / `__reg_T` 直接读写
@@ -157,7 +157,7 @@ dcc/
   `__asm__` 内联汇编
 - **表达式**：算术、位、移位、比较、逻辑、三元、逗号、赋值与复合赋值、
   自增自减、成员访问、`sizeof`、强制类型转换
-- **函数**：返回值在 D1/A（浮点走 FP/DP 寄存器，long 走 A:D1，结构体通过
+- **函数**：返回值在 D1/A（浮点走 FP/DP/EP 寄存器，long 走 A:D1，结构体通过
   `struct_ret` 返回）；参数经栈传递（见调用约定文档）；支持 `static` / `extern` /
   `inline`、函数原型、可变参数、`__interrupt__` ISR
 - **预处理**：`#include`、`#define`（对象宏/函数宏）、`#undef`、`#error`、
@@ -167,12 +167,10 @@ dcc/
 
 ## 已知限制
 
-- 不支持位域、匿名结构体/联合体、`_Static_assert`、`_Generic`
-- 结构体支持整体赋值和按值返回，但**不支持结构体按值传参**（请使用指针）
-- `switch` 每个 case 自动跳转到末尾，不支持 C 的 fallthrough
-- 字符字面量（`'A'`）与八进制字面量暂不支持
+- 不支持 `_Static_assert`、`_Generic`
+- 结构体支持整体赋值、按值返回和按值传参
 - 移位右操作数必须为编译期常量
-- 可变参数宏（`__VA_ARGS__`）不支持；`#pragma` 被忽略
+- `#pragma` 被忽略
 - 未定义函数/变量报错；不支持动态链接
 - 当前只做“正确翻译”，不做优化，也没有调试信息
 

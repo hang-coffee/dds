@@ -32,6 +32,10 @@ void cpu_init(DOCTOR_CPU *cpu) {
 	}
 
 	memset(cpu->regs, 0, sizeof(cpu->regs));
+	memset(cpu->fp_regs, 0, sizeof(cpu->fp_regs));
+	memset(cpu->dbl_regs, 0, sizeof(cpu->dbl_regs));
+	memset(cpu->ext_regs, 0, sizeof(cpu->ext_regs));
+	cpu->fpcr=0;
 	cpu->P=0;
 	cpu->halted=false;
 

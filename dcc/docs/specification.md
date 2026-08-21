@@ -16,9 +16,9 @@ DOCTOR dasm 汇编。除本文档明示的差异外，语义与 C99 一致。
 |---|---|---|---|
 | 十进制 | `42` | int | 可用 `u/U`、`l/L`、`ll/LL` 后缀 |
 | 十六进制 | `0x2A` / `0X2A` | int | 同上 |
-| 八进制 | — | — | 暂不支持八进制字面量（前导 0 按十进制处理） |
-| 字符 | — | — | 暂不支持字符字面量（可用整数编码，如 `65` 表示 `'A'`） |
-| 浮点 | `1.5` / `1.5f` / `2e3` | double / float | 带 `f/F` 后缀为 `float` |
+| 八进制 | `052` | int | 前导 0 表示八进制 |
+| 字符 | `'A'` / `'\n'` | int | 字符字面量；支持常见转义 |
+| 浮点 | `1.5` / `1.5f` / `2e3` / `1.5L` | double / float / long double | 带 `f/F` 后缀为 `float`；带 `l/L` 后缀为 `long double` |
 | 字符串 | `"abc"` | char[] 字面量 | 表达式上下文中退化为 `char *`；用于 `char s[]` 初始化 |
 
 ### 标识符与关键字
@@ -56,7 +56,8 @@ return if else while for do goto break continue switch case default sizeof
 | `unsigned char` | 1 字节 | 无符号 | |
 | `_Bool` | 1 字节 | 无符号 | C99 布尔；赋值/返回时任意非 0 归一化为 1 |
 | `float` | 4 字节 | — | 单精度浮点，DFE |
-| `double` / `long double` | 8 字节 | — | 双精度浮点，DDE；`long double` 按 double 处理 |
+| `double` | 8 字节 | — | 双精度浮点，DDE |
+| `long double` | 10 字节 | — | 80 位扩展精度浮点，DXE |
 | `void *` | 4 字节 | 无符号地址 | 通用指针；与其它指针互转需显式转换；解引用按 DWORD 访问 |
 | `T *` | 4 字节 | 无符号地址 | 指针；指向类型决定解引用尺寸与算术缩放 |
 | `struct S` / `union U` | 布局尺寸 | — | 成员顺序布局（union 取最大成员） |
@@ -101,12 +102,15 @@ enum Color c = BLUE;
 - **union**：所有成员共享起点（offset 0）；大小 = 最大成员尺寸。
 - 成员访问：`s.field`、`p->field`；支持嵌套、数组成员下标。
 - 结构体变量可整体赋值（块拷贝）；支持**按值返回**（经 `struct_ret` 缓冲）；
-  **不支持结构体按值传参**（请用指针）。
+  支持结构体按值传参（按字节拷贝到栈上）。
 - **enum**：常量默认从 0 递增；可显式赋值或引用其它常量；枚举变量按 4 字节处理。
 - **typedef**：可为内置类型、struct/union/enum、指针、数组、函数指针创建别名。
 - 自引用结构体：`struct Node { int v; struct Node *next; };`。
+- 支持匿名 struct/union 成员：内部成员直接并入父结构体/联合体，
+  可通过父对象直接访问，例如 `o.i`、`o.a`。
+- 支持位域：`unsigned int a : 3;`、`int b : 4;`，按 4 字节容器打包。
 - 类型定义在**整个编译单元**可见；多文件合并时类型环境全局共享。
-- 不支持位域、匿名结构体/联合体。
+- 支持匿名 struct/union 成员（内部成员直接并入父类型）；支持位域。
 
 ### 2.1 寄存器直访 `__reg_`
 
@@ -142,7 +146,7 @@ char *cp = (char *)ip;
 - `(char)x` / `(unsigned char)x`：截断低 8 位。
 - `(short)` / `(unsigned short)`：截断低 16 位。
 - `(int)x` / `(unsigned)x` / 指针转换：重解释位模式。
-- `(float)` / `(double)`：使用 `I2F`/`I2D`/`F2D`/`D2F` 等指令转换。
+- `(float)` / `(double)` / `(long double)`：使用 `I2F`/`I2D`/`F2D`/`D2F`/`I2E`/`F2E`/`D2E`/`E2F`/`E2D` 等指令转换。
 - 转换操作数须为表达式；不支持结构体转换。
 
 ### 类型影响代码生成
@@ -211,7 +215,7 @@ int x = 10;
 | 循环 | `for (init; cond; inc) stmt` | 三部分均可省略 |
 | 跳转 | `break;` / `continue;` | 必须在循环内 |
 | 跳转 | `goto label;` | 标号：`label:` |
-| 分支 | `switch (expr) { case ...: ... default: ... }` | 每个 case 自动跳转到末尾，不支持 fallthrough |
+| 分支 | `switch (expr) { case ...: ... default: ... }` | 支持 C 的 case 穿透（fallthrough）；`break` 跳出 switch |
 | 块 | `{ stmt* }` | |
 | 声明 | `type name [= init] [, ...];` | 见 §3 |
 | 内联汇编 | `__asm__("dasmasm");` | 见 §4.1 |
@@ -273,10 +277,10 @@ struct Point make_point(void) { ... return p; }
 ```
 
 - 返回值类型：`int` / `char` / `short` / `long` / `long long` / `_Bool` /
-  `float` / `double` / 指针 / 结构体 / `void`。
+  `float` / `double` / `long double` / 指针 / 结构体 / `void`。
 - 普通标量返回值经 D1 通道；64 位经 A:D1；浮点经 FP/DP；结构体经 `struct_ret`。
 - 标量/指针/浮点/64 位参数按值传递，经栈传递（调用约定见
-  `docs/calling-convention.md`）；结构体按值传参不支持，请使用指针。
+  `docs/calling-convention.md`）；结构体按值传参已支持。
 - 函数指针：支持声明、`typedef`、间接调用（`fp(args)` 与 `(*fp)(args)`）、
   作为参数/返回值。
 - 可变参数：支持 `...` 与 `stdarg.h`；可变参数槽位统一按 8 字节传递。
@@ -328,7 +332,7 @@ int main(void) { return add(g_count, 2); }
 - 宏展开为文本级 token 替换；函数宏实参先展开再替换；字符串/字符字面量内不展开。
 - 注释在预处理阶段剥离（保留换行）。
 - 被包含文件同样预处理；宏表跨文件共享，条件栈每文件独立。
-- 限制：不支持可变参数宏 `__VA_ARGS__`；反斜杠续行跨行宏未完整支持。
+- 限制：反斜杠续行跨行宏未完整支持；可变参数宏 `__VA_ARGS__` 已支持。
 
 ## 8. 编译限制与错误
 
@@ -337,7 +341,7 @@ int main(void) { return add(g_count, 2); }
 - 全局初始化器非常量 → 报错。
 - 未定义变量/函数 → 报错。
 - `*` 解引用非指针 → 报错；`&` 操作数非左值 → 报错。
-- 结构体按值传参不支持；位域/匿名结构体/联合体不支持。
+- 结构体按值传参已支持；位域已支持；匿名 struct/union 已支持。
 - `_Static_assert`、`_Generic` 不支持。
 - 预处理错误（找不到 include、`#error`、宏参数不匹配、条件栈不闭合）→ 报错并带
   `文件:行` 定位。
@@ -359,9 +363,9 @@ int main(void) { return add(g_count, 2); }
 |---|---|
 | `char` 符号性实现定义 | 裸 `char` 恒为无符号；`signed char` 有符号 |
 | `long` / `long long` | 均按 8 字节 64 位整数实现 |
-| `struct` / `union` | 支持；整体赋值/按值返回；无位域/匿名成员 |
+| `struct` / `union` | 支持；整体赋值/按值返回/按值传参；支持位域与匿名成员 |
 | 结构体传参 | 不支持按值传参，需用指针 |
-| 预处理 | 支持 `#include`/`#define`/`#if`/`#elif`/`#ifdef`/`#error`；不支持可变参数宏 |
+| 预处理 | 支持 `#include`/`#define`/`#if`/`#elif`/`#ifdef`/`#error`/可变参数宏 `__VA_ARGS__` |
 | `#pragma` | 忽略 |
 | 移位右操作数 | 必须为编译期常量 |
 | `_Static_assert` / `_Generic` | 不支持 |

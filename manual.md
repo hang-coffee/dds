@@ -170,7 +170,8 @@ ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定�
 ## 指令集参考
 
 基础指令操作码从 **0x00** 到 **0x44** 连续排列，共 **69** 条；
-加上 DFE（0x45–0x54）与 DDE（0x55–0x66），当前 ISA 共 **103** 条指令。  
+加上 DFE（0x45–0x54）、DDE（0x55–0x66）与 DXE（0x67–0x7A），
+当前 ISA 共 **123** 条指令。
 
 操作数约定：  
 
@@ -387,7 +388,7 @@ DFE 新增以下寄存器：
 | 31-8 | Rsvd | 保留，读为 0 |
 
 浮点异常标志为**粘着位**：发生异常时置 1，软件写 0 清除。  
-若 `FIE=1` 且发生浮点异常，DFE 会产生一个浮点异常中断（具体中断号由实现/系统配置决定，预留为 `IRQ6`）。
+若 `FIE=1` 且发生浮点异常，DFE/DDE/DXE 会产生一个浮点异常中断（具体中断号由实现/系统配置决定，预留为 `IRQ6`）。
 
 ### DFE 指令
 
@@ -516,6 +517,95 @@ DOCTOR 双精度浮点扩展（DOCTOR Double-precision Extension，DDE）提供 
 - `DP0` – `DP7` 是独立寄存器，不占用整数寄存器或 `FP0` – `FP7`。
 - DDE 内存访问与整数/单精度浮点内存访问一样受 MPU/物理边界检查约束。
 - DDE 指令暂不支持 `REP` 前缀。
+
+## DOCTOR 80位扩展精度浮点扩展（DXE）
+
+DOCTOR 80位扩展精度浮点扩展（DOCTOR eXtended-precision Float Extension，DXE）
+提供 80 位扩展精度浮点运算能力。本文档定义该扩展的指令集与编码；当前已在
+模拟器中实现，dasm/dcc 支持可作为后续工作。
+
+### DXE 寄存器
+
+| 寄存器 | 宽度 | 说明 |
+|---|---|---|
+| `EP0` – `EP7` | 80 位（10 字节） | 8 个扩展精度浮点数据寄存器 |
+| `FPCR` | 32 位 | 继续使用 DFE/DDE 的浮点控制/状态寄存器；DXE 的 `NX`/`UF`/`OF`/`DZ`/`INV` 也记录在 `FPCR` 中 |
+
+80 位扩展精度格式采用 IEEE 754 扩展精度（x87 80 位）布局：
+
+- bit 79：符号位 `S`
+- bit 78 – bit 64：15 位指数 `E`，偏置 `16383`
+- bit 63 – bit 0：64 位显式有效数（包含整数位）
+
+内存与栈中按 **Little-Endian** 存放 10 字节。
+
+### DXE 指令
+
+除 `ELD`/`EST` 外，DXE 指令不区分 `BYTE/WORD/DWORD`；扩展精度内存访问固定为
+10 字节。
+
+| 指令 | 格式 | 语义 |
+|---|---|---|
+| `EMOV` | `EMOV EPn, EPm` | `EPn = EPm` |
+| `ELDI` | `ELDI EPn, imm80` | 将 80 位立即数作为扩展精度位模式载入 `EPn` |
+| `ELD` | `ELD EPn, *DPR/*E` | 从内存读取 10 字节扩展精度值到 `EPn` |
+| `EST` | `EST *DPR/*E, EPn` | 将 `EPn` 的 10 字节扩展精度值写入内存 |
+| `EADD` | `EADD EPn, EPm` | `EPn = EPn + EPm` |
+| `ESUB` | `ESUB EPn, EPm` | `EPn = EPn - EPm` |
+| `EMUL` | `EMUL EPn, EPm` | `EPn = EPn * EPm` |
+| `EDIV` | `EDIV EPn, EPm` | `EPn = EPn / EPm` |
+| `ESQRT` | `ESQRT EPn` | `EPn = sqrt(EPn)` |
+| `ENEG` | `ENEG EPn` | `EPn = -EPn` |
+| `EABS` | `EABS EPn` | `EPn = |EPn|` |
+| `ECMP` | `ECMP EPn, EPm` | 比较 `EPn` 与 `EPm`，结果写入 `C`：小于 → `-1`，等于 → `0`，大于 → `1`；NaN 置 `FPCR.INV` |
+| `E2I` | `E2I DR, EPn` | 将 `EPn` 按当前舍入模式转换为 32 位整数，写入 `DR` |
+| `I2E` | `I2E EPn, DR` | 将 `DR` 中的 32 位整数转换为扩展精度，写入 `EPn` |
+| `F2E` | `F2E EPn, FPm` | 单精度 → 扩展精度：`EPn = (long double)FPm` |
+| `E2F` | `E2F FPn, EPm` | 扩展精度 → 单精度：`FPn = (float)EPm` |
+| `D2E` | `D2E EPn, DPm` | 双精度 → 扩展精度：`EPn = (long double)DPm` |
+| `E2D` | `E2D DPn, EPm` | 扩展精度 → 双精度：`DPn = (double)EPm` |
+| `EPUSH` | `EPUSH EPn` | 将 `EPn` 按 10 字节压栈（先低 4 字节，再中间 4 字节，最后高 2 字节） |
+| `EPOP` | `EPOP EPn` | 从栈顶弹出 10 字节到 `EPn` |
+
+### DXE 指令编码
+
+| 操作码 | 指令 |
+|---|---|
+| `0x67` | `EMOV` |
+| `0x68` | `ELDI` |
+| `0x69` | `ELD` |
+| `0x6A` | `EST` |
+| `0x6B` | `EADD` |
+| `0x6C` | `ESUB` |
+| `0x6D` | `EMUL` |
+| `0x6E` | `EDIV` |
+| `0x6F` | `ESQRT` |
+| `0x70` | `ENEG` |
+| `0x71` | `EABS` |
+| `0x72` | `ECMP` |
+| `0x73` | `E2I` |
+| `0x74` | `I2E` |
+| `0x75` | `F2E` |
+| `0x76` | `E2F` |
+| `0x77` | `D2E` |
+| `0x78` | `E2D` |
+| `0x79` | `EPUSH` |
+| `0x7A` | `EPOP` |
+
+`EP0` – `EP7` 在操作数表中的编码为 `0x00` – `0x07`，与 `FP0` – `FP7`、
+`DP0` – `DP7` 共用同一半字节编码区间；具体是单精度、双精度还是扩展精度由操作码决定。
+
+`ELDI` 的 `imm80` 是 10 字节立即数，按 Little-Endian 紧随 Byte 2；Byte 0 的
+长度字段按该指令实际总长度编码。由于 80 位立即数超过现有 `BYTE/WORD/DWORD`
+尺寸字段，汇编器应直接按扩展指令格式处理。
+
+### DXE 与现有 ISA 的关系
+
+- `EP0` – `EP7` 是独立寄存器，不占用整数寄存器、`FP0` – `FP7` 或 `DP0` – `DP7`。
+- `ELD`/`EST` 的内存访问与整数/单精度/双精度浮点内存访问一样受 MPU/物理边界
+  检查约束；`EPUSH`/`EPOP` 的栈访问受 `#STACK` 检查。
+- DXE 指令暂不支持 `REP` 前缀。
+- 若某实现未提供 DXE，执行 DXE 指令应视为非法指令（`#II`）。
 
 ## 机器码编码示例
 

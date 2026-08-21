@@ -42,7 +42,10 @@ typedef enum {
 	FSQRT, FNEG, FABS, FCMP, F2I, I2F, FPUSH, FPOP,
 	DMOV, DLDI, DLD, DST, DADD, DSUB, DMUL, DDIV,
 	DSQRT, DNEG, DABS, DCMP, D2I, I2D, DPUSH, DPOP,
-	F2D, D2F
+	F2D, D2F,
+	EMOV, ELDI, ELD, EST, EADD, ESUB, EMUL, EDIV,
+	ESQRT, ENEG, EABS, ECMP, E2I, I2E,
+	F2E, E2F, D2E, E2D, EPUSH, EPOP
 } Instr_index;	// 指令集
 
 typedef struct {
@@ -73,6 +76,7 @@ typedef struct DOCTOR_CPU_t{
 	uint32_t regs[REG_COUNT];
 	uint32_t fp_regs[8];	// DFE: FP0-FP7
 	double dbl_regs[8];	// DFE: DP0-DP7（64 位 double）
+	long double ext_regs[8]; // DXE: EP0-EP7（80 位扩展精度）
 	uint32_t fpcr;		// DFE: FPCR
 	
 	uint32_t P;

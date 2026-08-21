@@ -14,7 +14,7 @@ static std::string to_lower(const std::string& s) {
 }
 
 static bool is_instruction_token(token_type type) {
-    return (type >= TOK_INSTR_LET && type <= TOK_INSTR_D2F);
+    return (type >= TOK_INSTR_LET && type <= TOK_INSTR_EPOP);
 }
 
 static bool is_size_token(token_type type) {
@@ -33,7 +33,7 @@ static uint32_t size_token_to_bytes(token_type type) {
 }
 
 static bool is_register_token(token_type type) {
-    return (type >= TOK_REG_A && type <= TOK_REG_DP7);
+    return (type >= TOK_REG_A && type <= TOK_REG_EP7);
 }
 
 static bool is_sysreg_token(token_type type) {
@@ -108,6 +108,11 @@ static bool is_single_operand_instruction(token_type type) {
 		case TOK_INSTR_DABS:
 		case TOK_INSTR_DPUSH:
 		case TOK_INSTR_DPOP:
+		case TOK_INSTR_ESQRT:
+		case TOK_INSTR_ENEG:
+		case TOK_INSTR_EABS:
+		case TOK_INSTR_EPUSH:
+		case TOK_INSTR_EPOP:
         return true;
         default:
             return false;
@@ -192,6 +197,14 @@ static uint32_t operand_to_register_encoding(token_type type) {
         case TOK_REG_DP5: return 0x5;
         case TOK_REG_DP6: return 0x6;
         case TOK_REG_DP7: return 0x7;
+        case TOK_REG_EP0: return 0x0;
+        case TOK_REG_EP1: return 0x1;
+        case TOK_REG_EP2: return 0x2;
+        case TOK_REG_EP3: return 0x3;
+        case TOK_REG_EP4: return 0x4;
+        case TOK_REG_EP5: return 0x5;
+        case TOK_REG_EP6: return 0x6;
+        case TOK_REG_EP7: return 0x7;
         default: return 0xF;
     }
 }
@@ -503,9 +516,10 @@ static bool validate_operands(parser_context& ctx, token_type instr_type,
     }
     // 解引用 *reg 仅 LR(op2)/ST(op1)/POR(op1) 允许；偏移 +N 仅 LR(op2)/ST(op1)
     bool deref_ok1 = (instr_type == TOK_INSTR_ST || instr_type == TOK_INSTR_POR ||
-                      instr_type == TOK_INSTR_FST || instr_type == TOK_INSTR_DST);
+                      instr_type == TOK_INSTR_FST || instr_type == TOK_INSTR_DST ||
+                      instr_type == TOK_INSTR_EST);
     bool deref_ok2 = (instr_type == TOK_INSTR_LR || instr_type == TOK_INSTR_FLD ||
-                      instr_type == TOK_INSTR_DLD);
+                      instr_type == TOK_INSTR_DLD || instr_type == TOK_INSTR_ELD);
     bool off_ok1   = (instr_type == TOK_INSTR_ST);
     bool off_ok2   = (instr_type == TOK_INSTR_LR);
     if (op1.is_deref && !deref_ok1) { parser_error(ctx, "该指令不支持 * 解引用操作数"); return false; }
@@ -537,6 +551,7 @@ static uint32_t calculate_instruction_length(token_type instr_type,
     } else if (has_imm) {
         uint32_t imm_bytes = (size_type != TOK_UNKNOWN) ? size_token_to_bytes(size_type) : 4;
         if (instr_type == TOK_INSTR_DLDI) imm_bytes = 8;
+        if (instr_type == TOK_INSTR_ELDI) imm_bytes = 10;
         // 字符串立即数按实际字节数
         if (op1 && op1->is_string && op1->tok) imm_bytes = static_cast<uint32_t>(op1->tok->bytes.size());
         else if (op2 && op2->is_string && op2->tok) imm_bytes = static_cast<uint32_t>(op2->tok->bytes.size());
@@ -1044,6 +1059,8 @@ bool parser_pass2(parser_context& ctx) {
                 if (op.is_imm) {
                     eop.is_immediate = true;
                     eop.value = static_cast<uint64_t>(op.imm_value);
+                    if (op.tok && op.tok->type == TOK_IMMEDIATE)
+                        eop.value_hi = op.tok->value_hi;
                 } else if (op.is_string) {
                     eop.is_immediate = true;
                     eop.is_string = true;

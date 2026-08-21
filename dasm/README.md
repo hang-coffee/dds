@@ -1,6 +1,6 @@
 # dasm - DOCTOR 汇编器
 
-`dasm` 是 DOCTOR 指令集的汇编器，支持生成普通二进制或 ELF32 relocatable `.o`。
+`dasm` 是 DOCTOR 指令集的汇编器，支持基础整数指令、DFE/DDE 浮点扩展以及 DXE 80 位扩展精度浮点指令，支持生成普通二进制或 ELF32 relocatable `.o`。
 
 ## 构建
 

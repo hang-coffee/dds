@@ -11,6 +11,7 @@
 typedef struct Macro {
     char *name;
     int is_func;
+    int is_variadic;
     char **params;
     int nparams;
     char *body;
@@ -154,7 +155,7 @@ static int macro_defined(PP *pp, const char *name) {
     return find_macro(pp, name) != NULL;
 }
 
-static void add_macro(PP *pp, const char *name, int is_func, char **params, int nparams, const char *body) {
+static void add_macro(PP *pp, const char *name, int is_func, int is_variadic, char **params, int nparams, const char *body) {
     Macro *m = find_macro(pp, name);
     if (!m) {
         if (pp->nmacros >= pp->capmacros) {
@@ -172,6 +173,7 @@ static void add_macro(PP *pp, const char *name, int is_func, char **params, int 
         m->name = xstrdup(name);
     }
     m->is_func = is_func;
+    m->is_variadic = is_variadic;
     m->nparams = nparams;
     m->params = params;
     m->body = xstrdup(body ? body : "");
@@ -207,7 +209,7 @@ static char *trim_right(char *s) {
     return s;
 }
 
-static char *expand_macro_body(Macro *m, char **args) {
+static char *expand_macro_body(Macro *m, char **args, int nargs) {
     Buf b;
     buf_init(&b);
     const char *p = m->body;
@@ -217,7 +219,15 @@ static char *expand_macro_body(Macro *m, char **args) {
             while (is_ident_part(*p)) p++;
             size_t len = (size_t)(p - start);
             int replaced = 0;
-            for (int i = 0; i < m->nparams; i++) {
+            /* __VA_ARGS__：拼接所有可变参数 */
+            if (m->is_variadic && len == 11 && strncmp(start, "__VA_ARGS__", 11) == 0) {
+                for (int i = m->nparams; i < nargs; i++) {
+                    if (i > m->nparams) buf_puts(&b, ", ");
+                    buf_puts(&b, args[i]);
+                }
+                replaced = 1;
+            }
+            for (int i = 0; !replaced && i < m->nparams; i++) {
                 if (strlen(m->params[i]) == len && strncmp(m->params[i], start, len) == 0) {
                     buf_puts(&b, args[i]);
                     replaced = 1;
@@ -351,7 +361,15 @@ static void expand_text(PP *pp, const char *s, Buf *out, int depth) {
                         r++;
                     }
                     if (*r == ')') r++;
-                    if (nargs != m->nparams) {
+                    if (m->is_variadic) {
+                        if (nargs < m->nparams) {
+                            set_err(pp, "宏 %s 参数个数不足", name);
+                            free(name);
+                            for (int i = 0; i < nargs; i++) free(args[i]);
+                            free(args);
+                            return;
+                        }
+                    } else if (nargs != m->nparams) {
                         set_err(pp, "宏 %s 参数个数不匹配", name);
                         free(name);
                         for (int i = 0; i < nargs; i++) free(args[i]);
@@ -359,7 +377,7 @@ static void expand_text(PP *pp, const char *s, Buf *out, int depth) {
                         return;
                     }
                     m->expanding = 1;
-                    char *subst = expand_macro_body(m, args);
+                    char *subst = expand_macro_body(m, args, nargs);
                     m->expanding = 0;
                     Buf tmp;
                     buf_init(&tmp);
@@ -785,6 +803,7 @@ static void handle_directive(PP *pp, const char *line, const char *current_dir, 
         while (is_ident_part(*p)) p++;
         char *name = xstrndup(name_start, (size_t)(p - name_start));
         int is_func = 0;
+        int is_variadic = 0;
         char **params = NULL;
         int nparams = 0;
         if (*p == '(') {
@@ -793,6 +812,20 @@ static void handle_directive(PP *pp, const char *line, const char *current_dir, 
             while (*p && *p != ')') {
                 while (*p && isspace((unsigned char)*p)) p++;
                 if (*p == ')') break;
+                /* 可变参数：... */
+                if (p[0] == '.' && p[1] == '.' && p[2] == '.') {
+                    is_variadic = 1;
+                    p += 3;
+                    while (*p && isspace((unsigned char)*p)) p++;
+                    if (*p != ')') {
+                        set_err(pp, "可变参数 ... 必须是宏参数列表的最后一项");
+                        free(name);
+                        for (int i=0;i<nparams;i++) free(params[i]);
+                        free(params);
+                        return;
+                    }
+                    break;
+                }
                 if (!is_ident_start(*p)) { set_err(pp, "宏参数名非法"); free(name); return; }
                 const char *as = p;
                 while (is_ident_part(*p)) p++;
@@ -808,7 +841,7 @@ static void handle_directive(PP *pp, const char *line, const char *current_dir, 
         while (*p && isspace((unsigned char)*p)) p++;
         char *body = xstrdup(p);
         body = trim_right(body);
-        add_macro(pp, name, is_func, params, nparams, body);
+        add_macro(pp, name, is_func, is_variadic, params, nparams, body);
         free(name);
         free(body);
         return;

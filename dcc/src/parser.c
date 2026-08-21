@@ -240,7 +240,10 @@ static TypeInfo parse_type_spec(Parser *p) {
         }
         else break;
     }
-    if (saw_long) t.size = 8;
+    if (saw_long) {
+        if (t.is_double) t.size = 10;   /* long double: 80 位扩展精度 */
+        else t.size = 8;
+    }
     return t;
 }
 
@@ -337,6 +340,26 @@ static void compute_type_sizes(TypeInfo *t, int *storage_size, int *elem_size, i
     *base_size = bs;
 }
 
+static void member_copy(MemberDef *dst, const MemberDef *src) {
+    *dst = *src;
+    dst->name = src->name ? xstrdup(src->name) : NULL;
+    dst->struct_name = src->struct_name ? xstrdup(src->struct_name) : NULL;
+}
+
+/* 将匿名 struct/union 的成员直接并入父结构体/联合体 */
+static void flatten_anonymous_members(StructDef *parent, StructDef *inner, int base_off, int parent_union, int *max_sz) {
+    for (int i = 0; i < inner->nmembers; i++) {
+        parent->members = (MemberDef *)realloc(parent->members, (size_t)(parent->nmembers + 1) * sizeof(MemberDef));
+        MemberDef *md = &parent->members[parent->nmembers++];
+        member_copy(md, &inner->members[i]);
+        md->offset = parent_union ? inner->members[i].offset : base_off + inner->members[i].offset;
+        if (parent_union) {
+            int end = inner->members[i].offset + inner->members[i].size;
+            if (end > *max_sz) *max_sz = end;
+        }
+    }
+}
+
 static int parse_struct_body(Parser *p, TypeInfo *ty) {
     if (!expect_op(p, "{")) return 0;
     if (!ty->struct_name) {
@@ -353,11 +376,130 @@ static int parse_struct_body(Parser *p, TypeInfo *ty) {
     def->is_union = ty->is_union;
     int off = 0;
     int max_sz = 0;
+    int bit_unit_off = -1;
+    int bit_pos = 0;
     while (peek(p,0)->kind != T_EOF && strcmp(peek(p,0)->text, "}") != 0) {
         if (accept_op(p, ";")) continue;
         TypeInfo mt = parse_type_spec(p);
+
+        /* 内联匿名 struct/union 定义：struct { ... }; */
+        if ((mt.is_struct || mt.is_union) &&
+            peek(p,0)->kind == T_OP && strcmp(peek(p,0)->text, "{") == 0) {
+            if (!parse_struct_body(p, &mt)) {
+                free(mt.dims); free(mt.struct_name); free(mt.enum_name);
+                return 0;
+            }
+        }
+
+        /* 匿名 struct/union 成员：没有成员名，直接把内部成员并入父类型 */
+        if ((mt.is_struct || mt.is_union) &&
+            peek(p,0)->kind == T_OP && strcmp(peek(p,0)->text, ";") == 0) {
+            next(p);  /* ; */
+            StructDef *inner = mt.struct_name ? parser_find_struct(p, mt.struct_name) : NULL;
+            if (!inner) {
+                snprintf(p->err, sizeof(p->err), "匿名 struct/union 类型未定义");
+                free(mt.dims); free(mt.struct_name); free(mt.enum_name);
+                return 0;
+            }
+            if (ty->is_union) {
+                flatten_anonymous_members(def, inner, 0, 1, &max_sz);
+            } else {
+                flatten_anonymous_members(def, inner, off, 0, &max_sz);
+                off += inner->size;
+            }
+            free(mt.dims);
+            free(mt.struct_name);
+            free(mt.enum_name);
+            continue;
+        }
+
         char *mname = NULL;
-        if (!parse_declarator(p, &mt, &mname)) { free(mt.dims); free(mt.struct_name); free(mt.enum_name); free(mname); return 0; }
+        int is_bitfield = 0;
+        int bit_width = 0;
+
+        /* 匿名位域：type : width ; */
+        if (peek(p,0)->kind == T_OP && strcmp(peek(p,0)->text, ":") == 0) {
+            next(p);
+            Token *w = peek(p,0);
+            if (w->kind != T_NUM || w->ival <= 0) {
+                snprintf(p->err, sizeof(p->err), "line %d: 位域宽度必须为正整数", w->line);
+                free(mt.dims); free(mt.struct_name); free(mt.enum_name);
+                return 0;
+            }
+            next(p);
+            bit_width = (int)w->ival;
+            is_bitfield = 1;
+        } else {
+            if (!parse_declarator(p, &mt, &mname)) { free(mt.dims); free(mt.struct_name); free(mt.enum_name); free(mname); return 0; }
+            if (peek(p,0)->kind == T_OP && strcmp(peek(p,0)->text, ":") == 0) {
+                next(p);
+                Token *w = peek(p,0);
+                if (w->kind != T_NUM || w->ival <= 0) {
+                    snprintf(p->err, sizeof(p->err), "line %d: 位域宽度必须为正整数", w->line);
+                    free(mt.dims); free(mt.struct_name); free(mt.enum_name); free(mname);
+                    return 0;
+                }
+                next(p);
+                bit_width = (int)w->ival;
+                is_bitfield = 1;
+            }
+        }
+
+        if (is_bitfield) {
+            int storage = 4;
+            if (ty->is_union) {
+                /* union 中的位域共享同一存储起点 */
+                if (mname) {
+                    def->members = (MemberDef *)realloc(def->members, (size_t)(def->nmembers + 1) * sizeof(MemberDef));
+                    MemberDef *md = &def->members[def->nmembers++];
+                    memset(md, 0, sizeof(*md));
+                    md->name = mname;
+                    md->size = storage;
+                    md->elem_size = storage;
+                    md->base_size = storage;
+                    md->is_unsigned = mt.is_unsigned;
+                    md->is_bitfield = 1;
+                    md->bit_offset = 0;
+                    md->bit_width = bit_width;
+                    md->bit_unit_size = storage;
+                    md->offset = 0;
+                }
+                if (storage > max_sz) max_sz = storage;
+            } else {
+                if (bit_unit_off < 0 || bit_pos + bit_width > 32) {
+                    if (bit_unit_off >= 0) off += storage;
+                    bit_unit_off = off;
+                    bit_pos = 0;
+                }
+                if (mname) {
+                    def->members = (MemberDef *)realloc(def->members, (size_t)(def->nmembers + 1) * sizeof(MemberDef));
+                    MemberDef *md = &def->members[def->nmembers++];
+                    memset(md, 0, sizeof(*md));
+                    md->name = mname;
+                    md->size = storage;
+                    md->elem_size = storage;
+                    md->base_size = storage;
+                    md->is_unsigned = mt.is_unsigned;
+                    md->is_bitfield = 1;
+                    md->bit_offset = bit_pos;
+                    md->bit_width = bit_width;
+                    md->bit_unit_size = storage;
+                    md->offset = bit_unit_off;
+                }
+                bit_pos += bit_width;
+            }
+            free(mt.dims);
+            free(mt.enum_name);
+            if (!expect_op(p, ";")) return 0;
+            continue;
+        }
+
+        /* 普通成员：若前面有未关闭的位域容器，先闭合 */
+        if (bit_unit_off >= 0) {
+            off += 4;
+            bit_unit_off = -1;
+            bit_pos = 0;
+        }
         int st, es, bs;
         compute_type_sizes(&mt, &st, &es, &bs);
         def->members = (MemberDef *)realloc(def->members, (size_t)(def->nmembers + 1) * sizeof(MemberDef));
@@ -391,6 +533,7 @@ static int parse_struct_body(Parser *p, TypeInfo *ty) {
         if (!expect_op(p, ";")) return 0;
     }
     if (!expect_op(p, "}")) return 0;
+    if (bit_unit_off >= 0 && !ty->is_union) off += 4;
     def->size = ty->is_union ? max_sz : off;
     ty->size = def->size;
     return 1;
@@ -461,7 +604,7 @@ static Expr *parse_primary(Parser *p) {
         e->ival = (long long)t->fval;
         e->is_float = !t->is_double;
         e->is_double = t->is_double;
-        e->type_size = t->is_double ? 8 : 4;
+        e->type_size = t->is_double ? (t->is_long ? 10 : 8) : 4;
         e->line = t->line;
         e->fval = t->fval;
         return e;
@@ -1390,6 +1533,11 @@ Program parse_program(TokenArray *ta, char **err) {
                         g.dims[0] = len;
                         g.type_size = len * (g.base_size > 0 ? g.base_size : 1);
                     }
+                } else if (v->kind == T_FLOAT) {
+                    next(&p);
+                    g.has_init = 1;
+                    g.init_f = v->fval;
+                    g.init = (int)v->fval;
                 } else if (v->kind != T_NUM) {
                     snprintf(p.err, sizeof(p.err), "line %d: 全局初始化器必须是常量", v->line);
                     break;

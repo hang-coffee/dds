@@ -54,6 +54,16 @@ static const std::unordered_map<std::string, token_type> instr_map = {
     {"d2i", TOK_INSTR_D2I}, {"i2d", TOK_INSTR_I2D},
     {"dpush", TOK_INSTR_DPUSH}, {"dpop", TOK_INSTR_DPOP},
     {"f2d", TOK_INSTR_F2D}, {"d2f", TOK_INSTR_D2F},
+    {"emov", TOK_INSTR_EMOV}, {"eldi", TOK_INSTR_ELDI},
+    {"eld", TOK_INSTR_ELD}, {"est", TOK_INSTR_EST},
+    {"eadd", TOK_INSTR_EADD}, {"esub", TOK_INSTR_ESUB},
+    {"emul", TOK_INSTR_EMUL}, {"ediv", TOK_INSTR_EDIV},
+    {"esqrt", TOK_INSTR_ESQRT}, {"eneg", TOK_INSTR_ENEG},
+    {"eabs", TOK_INSTR_EABS}, {"ecmp", TOK_INSTR_ECMP},
+    {"e2i", TOK_INSTR_E2I}, {"i2e", TOK_INSTR_I2E},
+    {"f2e", TOK_INSTR_F2E}, {"e2f", TOK_INSTR_E2F},
+    {"d2e", TOK_INSTR_D2E}, {"e2d", TOK_INSTR_E2D},
+    {"epush", TOK_INSTR_EPUSH}, {"epop", TOK_INSTR_EPOP},
 };
 
 static const std::unordered_map<std::string, token_type> multi_instr_map = {
@@ -78,6 +88,10 @@ static const std::unordered_map<std::string, token_type> reg_map = {
     {"dp2", TOK_REG_DP2}, {"dp3", TOK_REG_DP3},
     {"dp4", TOK_REG_DP4}, {"dp5", TOK_REG_DP5},
     {"dp6", TOK_REG_DP6}, {"dp7", TOK_REG_DP7},
+    {"ep0", TOK_REG_EP0}, {"ep1", TOK_REG_EP1},
+    {"ep2", TOK_REG_EP2}, {"ep3", TOK_REG_EP3},
+    {"ep4", TOK_REG_EP4}, {"ep5", TOK_REG_EP5},
+    {"ep6", TOK_REG_EP6}, {"ep7", TOK_REG_EP7},
 };
 
 static const std::unordered_map<std::string, token_type> sysreg_map = {
@@ -116,11 +130,14 @@ static void skip_whitespace(lexer_context& ctx) {
     }
 }
 
-static bool parse_number(const std::string& text, unsigned long long& value) {
+static bool parse_number(const std::string& text, unsigned long long& value,
+                          unsigned long long& value_hi) {
     std::string cleaned;
     for (char c : text) {
         if (c != '_') cleaned.push_back(c);
     }
+    value = 0;
+    value_hi = 0;
 
     // 检查二进制后缀 (b 或 B) —— 注意: 0x 开头的十六进制数以 b/B 结尾时不能被当作二进制
     if (!cleaned.empty() && (cleaned.back() == 'b' || cleaned.back() == 'B')
@@ -137,11 +154,29 @@ static bool parse_number(const std::string& text, unsigned long long& value) {
         return true;
     }
 
-    // 十六进制 (0x 开头)
+    // 十六进制 (0x 开头)，支持最多 80 位（20 个十六进制数字）
     if (cleaned.compare(0, 2, "0x") == 0 || cleaned.compare(0, 2, "0X") == 0) {
-        char* endptr = nullptr;
-        value = std::strtoull(cleaned.c_str() + 2, &endptr, 16);
-        return (endptr != cleaned.c_str() + 2 && *endptr == '\0');
+        const char* p = cleaned.c_str() + 2;
+        if (*p == '\0') return false;
+        unsigned long long lo = 0, hi = 0;
+        int digits = 0;
+        while (*p) {
+            int d = 0;
+            char c = *p;
+            if (c >= '0' && c <= '9') d = c - '0';
+            else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+            else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+            else return false;
+            unsigned long long carry = (lo >> 60) & 0xFULL;
+            lo = (lo << 4) | (unsigned long long)d;
+            hi = (hi << 4) | carry;
+            digits++;
+            p++;
+        }
+        if (digits > 20) return false;   // 最多 80 位
+        value = lo;
+        value_hi = hi & 0xFFFFULL;       // 80 位立即数只需高 16 位
+        return true;
     }
 
     // 十进制（默认）
@@ -201,6 +236,7 @@ bool lexer_next_token(lexer_context& ctx, token& out_tok) {
             out_tok.type = TOK_LABEL_DEF;
             out_tok.text = label_text;
             out_tok.value = 0;
+            out_tok.value_hi = 0;
             out_tok.bytes.clear();
             return true;
         }
@@ -247,6 +283,7 @@ bool lexer_next_token(lexer_context& ctx, token& out_tok) {
         out_tok.type = TOK_STRING;
         out_tok.text = str_val;
         out_tok.value = 0;
+            out_tok.value_hi = 0;
         return true;
     }
 
@@ -262,8 +299,8 @@ bool lexer_next_token(lexer_context& ctx, token& out_tok) {
             }
         }
         std::string num_str = line.substr(start, ctx.current_pos - start);
-        unsigned long long val;
-        if (!parse_number(num_str, val)) {
+        unsigned long long val, val_hi;
+        if (!parse_number(num_str, val, val_hi)) {
             ctx.error = "无效数字: " + num_str;
             out_tok.type = TOK_UNKNOWN;
             return false;
@@ -271,6 +308,7 @@ bool lexer_next_token(lexer_context& ctx, token& out_tok) {
         out_tok.type = TOK_IMMEDIATE;
         out_tok.text = num_str;
         out_tok.value = val;
+        out_tok.value_hi = val_hi;
         out_tok.bytes.clear();
         return true;
     }
@@ -305,6 +343,7 @@ bool lexer_next_token(lexer_context& ctx, token& out_tok) {
                 out_tok.type = it->second;
                 out_tok.text = line.substr(start, ctx.current_pos - start);
                 out_tok.value = 0;
+            out_tok.value_hi = 0;
                 out_tok.bytes.clear();
                 matched_multi = true;
                 break;
@@ -377,6 +416,7 @@ bool lexer_next_token(lexer_context& ctx, token& out_tok) {
                 out_tok.type = stem_it->second;
                 out_tok.text = word.substr(0, word.size() - 2);
                 out_tok.value = 0;
+            out_tok.value_hi = 0;
                 out_tok.bytes.clear();
 
                 ctx.pending_tok.type = TOK_NZ_SUFFIX;
@@ -384,6 +424,7 @@ bool lexer_next_token(lexer_context& ctx, token& out_tok) {
                 ctx.pending_tok.line_no = ctx.line_no;
                 ctx.pending_tok.col_no = start + static_cast<size_t>(word.size() - 2);
                 ctx.pending_tok.value = 0;
+                ctx.pending_tok.value_hi = 0;
                 ctx.pending_tok.bytes.clear();
                 ctx.has_pending = true;
                 return true;
@@ -394,6 +435,7 @@ bool lexer_next_token(lexer_context& ctx, token& out_tok) {
         out_tok.type = TOK_LABEL_REF;
         out_tok.text = word;
         out_tok.value = 0;
+            out_tok.value_hi = 0;
         out_tok.bytes.clear();
         return true;
     }
@@ -411,6 +453,7 @@ bool lexer_next_token(lexer_context& ctx, token& out_tok) {
     }
     out_tok.text = std::string(1, ch);
     out_tok.value = 0;
+            out_tok.value_hi = 0;
     out_tok.bytes.clear();
     return (out_tok.type != TOK_UNKNOWN);
 }

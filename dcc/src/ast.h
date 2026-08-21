@@ -148,6 +148,7 @@ typedef struct {
     char *name;
     int has_init;
     int init;
+    double init_f;      /* 全局浮点初始化值（float/double/long double） */
     char *str_init;
     int has_str_init;
     long long *init_list;
@@ -193,6 +194,10 @@ typedef struct MemberDef {
     int array_len;
     int ptr_depth;
     char *struct_name;
+    int is_bitfield;
+    int bit_offset;
+    int bit_width;
+    int bit_unit_size;
 } MemberDef;
 
 typedef struct StructDef {

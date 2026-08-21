@@ -8,7 +8,7 @@
 
 - [x] `short` / `long` / `long long`（`long`/`long long` 使用 8 字节槽位，支持 64 位加减乘除/比较/位运算/移位，含符号区分）
 - [x] `unsigned` / `signed` 限定符（64 位比较/右移/除法已区分有符号与无符号）
-- [x] `float` / `double` / `long double`（存储、赋值、四则运算、比较、函数传参/返回、与整数互转）
+- [x] `float` / `double` / `long double`（`long double` 为 80 位 DXE；存储、赋值、四则运算、比较、函数传参/返回、与整数/浮点互转）
 - [x] `_Bool`（1 字节存储，赋值归一化为 0/1）
 - [x] `const` 只读检查（赋值/自增自减/复合赋值均报错）
 - [x] `volatile` / `restrict`（语法解析支持，当前不产生额外语义）
@@ -37,8 +37,8 @@
 - [x] `static` 局部变量（静态存储期，DATA 段分配并只初始化一次）
 - [x] `__interrupt__` ISR（`void f(void) __interrupt__`，返回使用 `IRET`）
 - [ ] `_Static_assert`
-- [ ] 匿名结构体 / 联合体
-- [ ] 位域
+- [x] 匿名结构体 / 联合体（成员直接并入父结构体/联合体）
+- [x] 位域（基础读写，按 4 字节容器打包）
 
 ### 表达式
 
@@ -57,9 +57,9 @@
 - [x] `#if` / `#ifdef` / `#ifndef` / `#elif` / `#else` / `#endif`（常量表达式与 `defined`）
 - [x] `#error`
 - [x] `#pragma`（忽略，不报错）
-- [ ] 可变参数宏 `__VA_ARGS__`
-- [ ] `switch` 每个 case 自动跳转到末尾，不支持 C 的 fallthrough
-- [ ] 字符字面量（`'A'`）与八进制字面量暂不支持
+- [x] 可变参数宏 `__VA_ARGS__`
+- [x] `switch` 支持 C 的 case 穿透（fallthrough）
+- [x] 字符字面量（`'A'`、`'\n'` 等）与八进制字面量（`052`）
 - [ ] 完整 C 标准库（已提供 freestanding 常用头文件：`stdarg.h`、`stddef.h`、`stdbool.h`、`stdint.h`、`inttypes.h`、`io.h`、`math.h`、`string.h`）
 
 ### 代码生成 / 工具链
@@ -71,4 +71,4 @@
 - [x] 结构体按值返回（通过 `struct_ret` 缓冲）
 - [ ] 优化
 - [ ] 调试信息
-- [ ] 结构体按值传参
+- [x] 结构体按值传参

@@ -94,6 +94,46 @@ TokenArray tokenize(const char *src) {
             ta_push(&ta, t);
             continue;
         }
+        if (c == '\'') {
+            const char *start = src + i;
+            i++;
+            int val = 0;
+            int have = 0;
+            if (src[i] && src[i] != '\'') {
+                if (src[i] == '\\' && src[i+1]) {
+                    char e = src[i+1];
+                    if (e == 'n') val = '\n';
+                    else if (e == 't') val = '\t';
+                    else if (e == 'r') val = '\r';
+                    else if (e == '0') val = '\0';
+                    else if (e == '\\') val = '\\';
+                    else if (e == '\'') val = '\'';
+                    else if (e == '"') val = '"';
+                    else val = (unsigned char)e;
+                    i += 2;
+                } else {
+                    val = (unsigned char)src[i];
+                    i++;
+                }
+                have = 1;
+            }
+            if (!have || src[i] != '\'') {
+                fprintf(stderr, "dcc: line %d: 非法字符字面量\n", line);
+                exit(1);
+            }
+            i++;
+            Token t;
+            memset(&t, 0, sizeof(t));
+            t.kind = T_NUM;
+            t.ival = val;
+            t.line = line;
+            size_t len = (size_t)(src + i - start);
+            t.text = (char *)malloc(len + 1);
+            memcpy(t.text, start, len);
+            t.text[len] = 0;
+            ta_push(&ta, t);
+            continue;
+        }
         if (isdigit((unsigned char)c)) {
             Token t;
             memset(&t, 0, sizeof(t));
@@ -116,13 +156,16 @@ TokenArray tokenize(const char *src) {
                     i++;
                 }
             } else {
+                /* 八进制：前导 0 且后跟 0-7 */
+                if (c == '0' && src[i+1] >= '0' && src[i+1] <= '7') base = 8;
                 t.ival = 0;
                 while (isdigit((unsigned char)src[i])) {
-                    t.ival = t.ival * 10 + (src[i]-'0');
+                    int d = src[i]-'0';
+                    if (base == 8 && d > 7) break;
+                    t.ival = t.ival * base + d;
                     i++;
                 }
                 if (src[i]=='.' || src[i]=='e' || src[i]=='E' || src[i]=='f' || src[i]=='F') {
-                    int is_float = 1;
                     if (src[i]=='.') {
                         i++;
                         while (isdigit((unsigned char)src[i])) i++;
@@ -132,7 +175,12 @@ TokenArray tokenize(const char *src) {
                         if (src[i]=='+' || src[i]=='-') i++;
                         while (isdigit((unsigned char)src[i])) i++;
                     }
+                    int is_long_double = 0;
                     if (src[i]=='f' || src[i]=='F') i++;
+                    else if (src[i]=='l' || src[i]=='L') {
+                        i++;
+                        is_long_double = 1;
+                    }
                     size_t len = (size_t)(src + i - start);
                     char *buf = (char *)malloc(len + 1);
                     memcpy(buf, start, len);
@@ -143,6 +191,7 @@ TokenArray tokenize(const char *src) {
                     ft.text = buf;
                     ft.fval = strtod(buf, NULL);
                     ft.line = line;
+                    ft.is_long = is_long_double;
                     if (buf[len-1] == 'f' || buf[len-1] == 'F')
                         ft.is_double = 0;
                     else

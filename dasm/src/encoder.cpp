@@ -51,6 +51,14 @@ uint32_t encoder_get_operand_encoding(token_type reg_type) {
         case TOK_REG_DP5: return 0x5;
         case TOK_REG_DP6: return 0x6;
         case TOK_REG_DP7: return 0x7;
+        case TOK_REG_EP0: return 0x0;
+        case TOK_REG_EP1: return 0x1;
+        case TOK_REG_EP2: return 0x2;
+        case TOK_REG_EP3: return 0x3;
+        case TOK_REG_EP4: return 0x4;
+        case TOK_REG_EP5: return 0x5;
+        case TOK_REG_EP6: return 0x6;
+        case TOK_REG_EP7: return 0x7;
         default: return 0xF;
     }
 }
@@ -123,6 +131,7 @@ enc_result_t encoder_encode(token_type instr_type,
     } else if (has_imm) {
         uint32_t imm_bytes = (size_type != TOK_UNKNOWN) ? get_immediate_bytes(size_type) : 4;
         if (instr_type == TOK_INSTR_DLDI) imm_bytes = 8;
+        if (instr_type == TOK_INSTR_ELDI) imm_bytes = 10;
         extra_bytes += imm_bytes;
     }
 
@@ -179,6 +188,14 @@ enc_result_t encoder_encode(token_type instr_type,
             for (uint32_t i = 0; i < 8; i++) {
                 result.bytes.push_back(static_cast<uint8_t>((imm64 >> (i * 8)) & 0xFF));
             }
+        } else if (instr_type == TOK_INSTR_ELDI) {
+            uint64_t imm64 = (uint64_t)op2.value;
+            uint32_t imm_hi = (uint32_t)(op2.value_hi & 0xFFFFULL);
+            for (uint32_t i = 0; i < 8; i++) {
+                result.bytes.push_back(static_cast<uint8_t>((imm64 >> (i * 8)) & 0xFF));
+            }
+            result.bytes.push_back(static_cast<uint8_t>(imm_hi & 0xFF));
+            result.bytes.push_back(static_cast<uint8_t>((imm_hi >> 8) & 0xFF));
         } else {
             uint32_t imm = op2.value;
             uint32_t imm_bytes = (size_type != TOK_UNKNOWN) ? get_immediate_bytes(size_type) : 4;

@@ -75,6 +75,65 @@ set_dword_mem(cpu, addr, (uint32_t)(bits & 0xffffffffu), mem_type);
 set_dword_mem(cpu, addr+4, (uint32_t)(bits>>32), mem_type);
 }
 
+// DXE 80 位扩展精度转换
+static inline long double ext_from_bits(const uint8_t b[10]) {
+uint64_t mant=0;
+for(int i=0; i<8; i++) mant |= ((uint64_t)b[i]) << (8*i);
+uint16_t exp=(uint16_t)(((uint16_t)(b[9]&0x7f)<<8) | b[8]);
+int sign=(b[9]&0x80)?1:0;
+if(exp==0x7fff) {
+if(mant==0x8000000000000000ULL)
+return sign ? -INFINITY : INFINITY;
+return sign ? -(long double)NAN : (long double)NAN;
+}
+if(exp==0 && mant==0)
+return sign ? -0.0L : 0.0L;
+int e=(exp==0)?1:(int)exp;
+long double val=ldexpl((long double)mant, e-16383-63);
+return sign ? -val : val;
+}
+
+static inline void ext_to_bits(long double x, uint8_t b[10]) {
+memset(b, 0, 10);
+int sign=signbit(x)?1:0;
+uint16_t exp=0;
+uint64_t mant=0;
+if(isnan(x)) {
+exp=0x7fff;
+mant=0xc000000000000000ULL;
+} else if(isinf(x)) {
+exp=0x7fff;
+mant=0x8000000000000000ULL;
+} else if(x==0.0L) {
+b[9]=(uint8_t)(sign?0x80:0);
+return;
+} else {
+int e=0;
+long double m=frexpl(x, &e);
+m=fabsl(m);
+long double scaled=ldexpl(m, 64);
+if(scaled >= 18446744073709551616.0L) mant=0xFFFFFFFFFFFFFFFFULL;
+else mant=(uint64_t)scaled;
+if(mant==0) mant=1;
+exp=(uint16_t)(e + 16382);
+}
+b[8]=(uint8_t)(exp & 0xff);
+b[9]=(uint8_t)(((exp>>8)&0x7f) | (sign?0x80:0));
+for(int i=0; i<8; i++) b[i]=(uint8_t)((mant>>(8*i))&0xff);
+}
+
+static inline long double ext_from_mem(DOCTOR_CPU *cpu, uint32_t addr, uint8_t mem_type) {
+uint8_t b[10];
+for(int i=0; i<10; i++) b[i]=load_from_mem(cpu, addr+i, mem_type);
+return ext_from_bits(b);
+}
+
+static inline void ext_to_mem(DOCTOR_CPU *cpu, uint32_t addr, long double v, uint8_t mem_type) {
+uint8_t b[10];
+ext_to_bits(v, b);
+for(int i=0; i<10; i++) set_mem(cpu, addr+i, b[i], mem_type);
+}
+
 // 跳转：设置 P=E。返回 0=成功；4=跳转目标越界（#GP）
 static inline int jmp(DOCTOR_CPU *cpu) {
 	uint32_t t=*op2reg(cpu, REG_E);
@@ -1935,6 +1994,137 @@ break;
 case D2F:
 if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
 cpu->fp_regs[instr->op1]=fp_float_to_bits((float)cpu->dbl_regs[instr->op2]);
+break;
+case EMOV:
+if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
+cpu->ext_regs[instr->op1]=cpu->ext_regs[instr->op2];
+break;
+case ELDI:
+if(instr->op1>7) { exe_err(cpu); err=1; return err; }
+{
+uint8_t b[10];
+for(int i=0; i<4; i++) b[i]=(uint8_t)((instr->imm>>(8*i))&0xff);
+for(int i=0; i<4; i++) b[i+4]=(uint8_t)((instr->imm_hi>>(8*i))&0xff);
+b[8]=(uint8_t)(instr->imm_hi2&0xff);
+b[9]=(uint8_t)((instr->imm_hi2>>8)&0xff);
+cpu->ext_regs[instr->op1]=ext_from_bits(b);
+}
+break;
+case ELD: {
+if(instr->op1>7 || instr->op2==0xe || instr->op2==0xf) { exe_err(cpu); err=1; return err; }
+uint32_t eaddr=*op2reg(cpu, instr->op2);
+if(instr->op2==REG_E) {
+if(mem_check_code(cpu, eaddr, 10)) { exe_err(cpu); return 4; }
+cpu->ext_regs[instr->op1]=ext_from_mem(cpu, eaddr, MEM_TYPE_CODE);
+} else {
+if(mem_check_data(cpu, eaddr, 10)) { exe_err(cpu); return 4; }
+cpu->ext_regs[instr->op1]=ext_from_mem(cpu, eaddr, MEM_TYPE_DATA);
+}
+break;
+}
+case EST: {
+if(instr->op2>7 || instr->op1==0xe || instr->op1==0xf) { exe_err(cpu); err=1; return err; }
+uint32_t eaddr=*op2reg(cpu, instr->op1);
+if(instr->op1==REG_E) {
+if(mem_check_code(cpu, eaddr, 10)) { exe_err(cpu); return 4; }
+ext_to_mem(cpu, eaddr, cpu->ext_regs[instr->op2], MEM_TYPE_CODE);
+} else {
+if(mem_check_data(cpu, eaddr, 10)) { exe_err(cpu); return 4; }
+ext_to_mem(cpu, eaddr, cpu->ext_regs[instr->op2], MEM_TYPE_DATA);
+}
+break;
+}
+case EADD:
+if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
+cpu->ext_regs[instr->op1] += cpu->ext_regs[instr->op2];
+break;
+case ESUB:
+if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
+cpu->ext_regs[instr->op1] -= cpu->ext_regs[instr->op2];
+break;
+case EMUL:
+if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
+cpu->ext_regs[instr->op1] *= cpu->ext_regs[instr->op2];
+break;
+case EDIV:
+if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
+if(cpu->ext_regs[instr->op2]==0.0L) cpu->fpcr |= (1u<<3);
+cpu->ext_regs[instr->op1] /= cpu->ext_regs[instr->op2];
+break;
+case ESQRT:
+if(instr->op1>7) { exe_err(cpu); err=1; return err; }
+if(cpu->ext_regs[instr->op1]<0.0L) cpu->fpcr |= (1u<<4);
+cpu->ext_regs[instr->op1]=sqrtl(cpu->ext_regs[instr->op1]);
+break;
+case ENEG:
+if(instr->op1>7) { exe_err(cpu); err=1; return err; }
+cpu->ext_regs[instr->op1] = -cpu->ext_regs[instr->op1];
+break;
+case EABS:
+if(instr->op1>7) { exe_err(cpu); err=1; return err; }
+cpu->ext_regs[instr->op1] = fabsl(cpu->ext_regs[instr->op1]);
+break;
+case ECMP: {
+if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
+long double ea=cpu->ext_regs[instr->op1], eb=cpu->ext_regs[instr->op2];
+if(isnan(ea) || isnan(eb)) { cpu->fpcr |= (1u<<4); cpu->regs[REG_C]=0; }
+else if(ea<eb) cpu->regs[REG_C]=(uint32_t)-1;
+else if(ea>eb) cpu->regs[REG_C]=1;
+else cpu->regs[REG_C]=0;
+break;
+}
+case E2I:
+if(instr->op1==0xe || instr->op1==0xf || instr->op2>7) { exe_err(cpu); err=1; return err; }
+*op2reg(cpu, instr->op1)=(uint32_t)(int32_t)cpu->ext_regs[instr->op2];
+break;
+case I2E:
+if(instr->op1>7 || instr->op2==0xe || instr->op2==0xf) { exe_err(cpu); err=1; return err; }
+cpu->ext_regs[instr->op1]=(long double)(int32_t)(*op2reg(cpu, instr->op2));
+break;
+case F2E:
+if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
+cpu->ext_regs[instr->op1]=(long double)fp_bits_to_float(cpu->fp_regs[instr->op2]);
+break;
+case E2F:
+if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
+cpu->fp_regs[instr->op1]=fp_float_to_bits((float)cpu->ext_regs[instr->op2]);
+break;
+case D2E:
+if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
+cpu->ext_regs[instr->op1]=(long double)cpu->dbl_regs[instr->op2];
+break;
+case E2D:
+if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
+cpu->dbl_regs[instr->op1]=(double)cpu->ext_regs[instr->op2];
+break;
+case EPUSH:
+if(instr->op1>7) { exe_err(cpu); err=1; return err; }
+{
+uint8_t b[10];
+ext_to_bits(cpu->ext_regs[instr->op1], b);
+uint32_t lo=((uint32_t)b[0])|(((uint32_t)b[1])<<8)|(((uint32_t)b[2])<<16)|(((uint32_t)b[3])<<24);
+uint32_t mid=((uint32_t)b[4])|(((uint32_t)b[5])<<8)|(((uint32_t)b[6])<<16)|(((uint32_t)b[7])<<24);
+uint16_t hi=(uint16_t)(((uint16_t)b[8])|(((uint16_t)b[9])<<8));
+int perr=push(cpu, lo, 3);
+if(!perr) perr=push(cpu, mid, 3);
+if(!perr) perr=push(cpu, hi, 2);
+if(perr) { exe_err(cpu); if(perr==2){ cpu->sys.xar=((uint32_t)(*op2reg(cpu, REG_S))+10)&0x7fffffff; return 3; } return 1; }
+}
+break;
+case EPOP:
+if(instr->op1>7) { exe_err(cpu); err=1; return err; }
+if((*op2reg(cpu, REG_S))<10) { exe_err(cpu); cpu->sys.xar=0x80000000u|(((*op2reg(cpu, REG_S))-10)&0x7fffffff); return 3; }
+{
+uint16_t hi=(uint16_t)pop(cpu, 2);
+uint32_t mid=pop(cpu, 3);
+uint32_t lo=pop(cpu, 3);
+uint8_t b[10];
+for(int i=0; i<4; i++) b[i]=(uint8_t)((lo>>(8*i))&0xff);
+for(int i=0; i<4; i++) b[i+4]=(uint8_t)((mid>>(8*i))&0xff);
+b[8]=(uint8_t)(hi&0xff);
+b[9]=(uint8_t)((hi>>8)&0xff);
+cpu->ext_regs[instr->op1]=ext_from_bits(b);
+}
 break;
 
 default:

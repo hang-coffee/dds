@@ -10,6 +10,7 @@ namespace dasm {
 
 struct enc_operand_t {
     uint64_t value;
+    uint64_t value_hi;   // ELDI 80 位立即数的高 16 位
     bool is_register;
     bool is_immediate;
     bool is_string;

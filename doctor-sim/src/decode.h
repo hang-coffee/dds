@@ -11,6 +11,7 @@ typedef struct {
 	uint8_t op2;		// 第二个操作数
 	uint32_t imm;		// 立即数
 	uint32_t imm_hi;	// 64 位立即数高 32 位（DLDI）
+	uint32_t imm_hi2;	// 80 位立即数最高 16 位（ELDI，bits 64-79）
 	
 	uint8_t i_type;		// 指令类型，0=普通指令 1=SR 2=SETB/GETB
 	uint8_t sr_k;		// SR命令的k值

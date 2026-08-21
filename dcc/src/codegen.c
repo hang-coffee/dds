@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <math.h>
 
 typedef struct {
     char *name;
@@ -96,6 +97,42 @@ static void emit_store_to_b(CodeGen *cg, int size);
 static void emit_load_from_b(CodeGen *cg, int size, int is_unsigned);
 static int expr_is_float(CodeGen *cg, Expr *e);
 static int expr_is_double(CodeGen *cg, Expr *e);
+
+/* 把 double 值编码为 80 位扩展精度（IEEE 754 x87）立即数 */
+static void double_to_ext80(double d, unsigned long long *lo, unsigned int *hi) {
+    long double x = (long double)d;
+    int sign = signbit(x) ? 1 : 0;
+    uint16_t exp = 0;
+    uint64_t mant = 0;
+    if (isnan(x)) {
+        exp = 0x7fff;
+        mant = 0xc000000000000000ULL;
+    } else if (isinf(x)) {
+        exp = 0x7fff;
+        mant = 0x8000000000000000ULL;
+    } else if (x == 0.0L) {
+        exp = 0;
+        mant = 0;
+    } else {
+        int e = 0;
+        long double m = frexpl(x, &e);
+        m = fabsl(m);
+        long double scaled = ldexpl(m, 64);
+        if (scaled >= 18446744073709551616.0L) mant = 0xFFFFFFFFFFFFFFFFULL;
+        else mant = (uint64_t)scaled;
+        if (mant == 0) mant = 1;
+        exp = (uint16_t)(e + 16382);
+    }
+    uint8_t b[10];
+    memset(b, 0, sizeof(b));
+    b[8] = (uint8_t)(exp & 0xff);
+    b[9] = (uint8_t)(((exp >> 8) & 0x7f) | (sign ? 0x80 : 0));
+    for (int i = 0; i < 8; i++) b[i] = (uint8_t)((mant >> (8 * i)) & 0xff);
+    *lo = 0;
+    for (int i = 0; i < 8; i++) *lo |= ((unsigned long long)b[i]) << (8 * i);
+    *hi = (unsigned int)b[8] | ((unsigned int)b[9] << 8);
+}
+
 static void emit_conv_to_int(CodeGen *cg, Expr *e);
 
 static char *xstrdup(const char *s) {
@@ -214,6 +251,41 @@ static int member_offset(CodeGen *cg, const char *sname, const char *mname) {
     MemberDef *m = member_def(cg, sname, mname);
     return m ? m->offset : 0;
 }
+
+static void emit_load_bitfield(CodeGen *cg, MemberDef *m) {
+    /* A 已指向位域所在存储单元 */
+    cg_emit(cg, "LR DWORD A, *A");
+    if (m->bit_offset) cg_emit(cg, "SHR DWORD A, %d", m->bit_offset);
+    if (m->bit_width < 32) {
+        uint32_t mask = (1u << m->bit_width) - 1u;
+        cg_emit(cg, "LET B, DWORD 0x%X", mask);
+        cg_emit(cg, "AND DWORD A, B");
+        if (!m->is_unsigned) {
+            int shift = 32 - m->bit_width;
+            cg_emit(cg, "SHL DWORD A, %d", shift);
+            cg_emit(cg, "MSR DWORD A, %d", shift);
+        }
+    }
+}
+
+static void emit_store_bitfield(CodeGen *cg, MemberDef *m) {
+    /* 调用前已把要写入的值放在 A；这里完成读-改-写 */
+    cg_emit(cg, "PUSH DWORD A");
+    /* 左值地址在 gen_assign 中已通过 gen_lvalue_addr 得到；此函数期望 A=地址 */
+    cg_emit(cg, "MOV B, A");
+    cg_emit(cg, "LR DWORD A, *B");
+    uint32_t width_mask = (m->bit_width == 32) ? 0xFFFFFFFFu : ((1u << m->bit_width) - 1u);
+    uint32_t field_mask = width_mask << m->bit_offset;
+    cg_emit(cg, "LET R, DWORD 0x%X", ~field_mask);
+    cg_emit(cg, "AND DWORD A, R");
+    cg_emit(cg, "POP DWORD C");
+    if (m->bit_offset) cg_emit(cg, "SHL DWORD C, %d", m->bit_offset);
+    cg_emit(cg, "LET R, DWORD 0x%X", field_mask);
+    cg_emit(cg, "AND DWORD C, R");
+    cg_emit(cg, "OR DWORD A, C");
+    cg_emit(cg, "ST DWORD *B, A");
+}
+
 
 static void var_func_ret_info(CodeGen *cg, Expr *e, int *rsz, int *rf, int *rd, int *rvoid, int *ris, const char **rsname) {
     *rsz = 4; *rf = 0; *rd = 0; *rvoid = 0; *ris = 0; *rsname = NULL;
@@ -934,6 +1006,21 @@ static void gen_incdec(CodeGen *cg, Expr *e, int postfix) {
     if (postfix) cg_emit(cg, "POP DWORD A");
 }
 
+static void gen_push_struct_arg(CodeGen *cg, Expr *arg, int *argbytes) {
+    int sz = expr_size(cg, arg);
+    gen_expr(cg, arg);          /* A = 结构体地址 */
+    cg_emit(cg, "MOV R, A");
+    cg_emit(cg, "LET C, DWORD %d", sz);
+    const char *lp = cg_new_label(cg, "PS");
+    cg_emit(cg, "%s:", lp);
+    cg_emit(cg, "LOD BYTE A");
+    cg_emit(cg, "PUSH BYTE A");
+    cg_emit(cg, "CDI");
+    cg_emit(cg, "LET E, DWORD %s", lp);
+    cg_emit(cg, "JNZ");
+    *argbytes += sz;
+}
+
 static void gen_call(CodeGen *cg, Expr *e) {
     if (e->name && strcmp(e->name, "__builtin_va_start") == 0) {
         if (e->nargs < 1) { fprintf(stderr, "__builtin_va_start 缺少参数\n"); exit(1); }
@@ -1011,41 +1098,56 @@ static void gen_call(CodeGen *cg, Expr *e) {
             argbytes += 8;
         }
         for (int i = 0; i < named_count && i < e->nargs; i++) {
-            gen_expr(cg, e->args[i]);
-            if (expr_is_float(cg, e->args[i])) {
-                cg_emit(cg, "FPUSH FP0");
-                argbytes += 4;
-            } else if (expr_is_double(cg, e->args[i])) {
-                cg_emit(cg, "DPUSH DP0");
-                argbytes += 8;
-            } else if (expr_size(cg, e->args[i]) == 8) {
-                cg_emit(cg, "PUSH DWORD A");
-                cg_emit(cg, "PUSH DWORD D1");
-                argbytes += 8;
+            if (expr_is_struct(cg, e->args[i])) {
+                gen_push_struct_arg(cg, e->args[i], &argbytes);
             } else {
-                cg_emit(cg, "PUSH DWORD A");
-                argbytes += 4;
+                gen_expr(cg, e->args[i]);
+                if (expr_size(cg, e->args[i]) == 10) {
+                    cg_emit(cg, "EPUSH EP0");
+                    argbytes += 10;
+                } else if (expr_is_float(cg, e->args[i])) {
+                    cg_emit(cg, "FPUSH FP0");
+                    argbytes += 4;
+                } else if (expr_is_double(cg, e->args[i])) {
+                    cg_emit(cg, "DPUSH DP0");
+                    argbytes += 8;
+                } else if (expr_size(cg, e->args[i]) == 8) {
+                    cg_emit(cg, "PUSH DWORD A");
+                    cg_emit(cg, "PUSH DWORD D1");
+                    argbytes += 8;
+                } else {
+                    cg_emit(cg, "PUSH DWORD A");
+                    argbytes += 4;
+                }
             }
         }
     } else {
         for (int i = 0; i < e->nargs; i++) {
-            gen_expr(cg, e->args[i]);
-            if (expr_is_float(cg, e->args[i])) {
-                cg_emit(cg, "FPUSH FP0");
-                argbytes += 4;
-            } else if (expr_is_double(cg, e->args[i])) {
-                cg_emit(cg, "DPUSH DP0");
-                argbytes += 8;
-            } else if (expr_size(cg, e->args[i]) == 8) {
-                cg_emit(cg, "PUSH DWORD A");
-                cg_emit(cg, "PUSH DWORD D1");
-                argbytes += 8;
+            if (expr_is_struct(cg, e->args[i])) {
+                gen_push_struct_arg(cg, e->args[i], &argbytes);
             } else {
-                cg_emit(cg, "PUSH DWORD A");
-                argbytes += 4;
+                gen_expr(cg, e->args[i]);
+                if (expr_size(cg, e->args[i]) == 10) {
+                    cg_emit(cg, "EPUSH EP0");
+                    argbytes += 10;
+                } else if (expr_is_float(cg, e->args[i])) {
+                    cg_emit(cg, "FPUSH FP0");
+                    argbytes += 4;
+                } else if (expr_is_double(cg, e->args[i])) {
+                    cg_emit(cg, "DPUSH DP0");
+                    argbytes += 8;
+                } else if (expr_size(cg, e->args[i]) == 8) {
+                    cg_emit(cg, "PUSH DWORD A");
+                    cg_emit(cg, "PUSH DWORD D1");
+                    argbytes += 8;
+                } else {
+                    cg_emit(cg, "PUSH DWORD A");
+                    argbytes += 4;
+                }
             }
         }
     }
+
     const char *ret = cg_new_label(cg, "RET");
     if (direct) {
         cg_emit(cg, "LET E, DWORD %s", ret);
@@ -1478,42 +1580,59 @@ static void emit_signed_div32(CodeGen *cg) {
 
 
 static void emit_conv_to_float(CodeGen *cg, Expr *e) {
-    if (expr_is_double(cg, e)) cg_emit(cg, "D2F FP0, DP0");
+    if (expr_size(cg, e) == 10) cg_emit(cg, "E2F FP0, EP0");
+    else if (expr_is_double(cg, e)) cg_emit(cg, "D2F FP0, DP0");
     else if (!expr_is_float(cg, e)) cg_emit(cg, "I2F FP0, A");
 }
 
 static void emit_conv_to_double(CodeGen *cg, Expr *e) {
-    if (expr_is_float(cg, e)) cg_emit(cg, "F2D DP0, FP0");
+    if (expr_size(cg, e) == 10) cg_emit(cg, "E2D DP0, EP0");
+    else if (expr_is_float(cg, e)) cg_emit(cg, "F2D DP0, FP0");
     else if (!expr_is_double(cg, e)) cg_emit(cg, "I2D DP0, A");
 }
 
+static void emit_conv_to_long_double(CodeGen *cg, Expr *e) {
+    if (expr_size(cg, e) == 10) return;
+    if (expr_is_float(cg, e)) cg_emit(cg, "F2E EP0, FP0");
+    else if (expr_is_double(cg, e)) cg_emit(cg, "D2E EP0, DP0");
+    else cg_emit(cg, "I2E EP0, A");
+}
+
 static void emit_conv_to_int(CodeGen *cg, Expr *e) {
-    if (expr_is_float(cg, e)) cg_emit(cg, "F2I A, FP0");
+    if (expr_size(cg, e) == 10) cg_emit(cg, "E2I A, EP0");
+    else if (expr_is_float(cg, e)) cg_emit(cg, "F2I A, FP0");
     else if (expr_is_double(cg, e)) cg_emit(cg, "D2I A, DP0");
 }
 
 static void gen_fp_binop(CodeGen *cg, Expr *e) {
     const char *op = e->op;
+    int is_long = expr_size(cg, e->l) == 10 || expr_size(cg, e->r) == 10;
     int is_double = expr_is_double(cg, e->l) || expr_is_double(cg, e->r);
-    /* 右操作数 → FP1/DP1 */
+    /* 右操作数 → FP1/DP1/EP1 */
     gen_expr(cg, e->r);
-    if (is_double) {
+    if (is_long) {
+        emit_conv_to_long_double(cg, e->r);
+        cg_emit(cg, "EMOV EP1, EP0");
+    } else if (is_double) {
         emit_conv_to_double(cg, e->r);
         cg_emit(cg, "DMOV DP1, DP0");
     } else {
         emit_conv_to_float(cg, e->r);
         cg_emit(cg, "FMOV FP1, FP0");
     }
-    /* 左操作数 → FP0/DP0 */
+    /* 左操作数 → FP0/DP0/EP0 */
     gen_expr(cg, e->l);
-    if (is_double) {
+    if (is_long) {
+        emit_conv_to_long_double(cg, e->l);
+    } else if (is_double) {
         emit_conv_to_double(cg, e->l);
     } else {
         emit_conv_to_float(cg, e->l);
     }
     if (strcmp(op,"==")==0 || strcmp(op,"!=")==0 || strcmp(op,"<")==0 ||
         strcmp(op,"<=")==0 || strcmp(op,">")==0 || strcmp(op,">=")==0) {
-        cg_emit(cg, is_double ? "DCMP DP0, DP1" : "FCMP FP0, FP1");
+        if (is_long) cg_emit(cg, "ECMP EP0, EP1");
+        else cg_emit(cg, is_double ? "DCMP DP0, DP1" : "FCMP FP0, FP1");
         const char *lt = cg_new_label(cg, "FC");
         const char *le = cg_new_label(cg, "FC");
         cg_emit(cg, "ZERO T");
@@ -1532,7 +1651,13 @@ static void gen_fp_binop(CodeGen *cg, Expr *e) {
         cg_emit(cg, "%s:", le);
         return;
     }
-    if (strcmp(op,"+")==0) cg_emit(cg, is_double ? "DADD DP0, DP1" : "FADD FP0, FP1");
+    if (is_long) {
+        if (strcmp(op,"+")==0) cg_emit(cg, "EADD EP0, EP1");
+        else if (strcmp(op,"-")==0) cg_emit(cg, "ESUB EP0, EP1");
+        else if (strcmp(op,"*")==0) cg_emit(cg, "EMUL EP0, EP1");
+        else if (strcmp(op,"/")==0) cg_emit(cg, "EDIV EP0, EP1");
+        else { fprintf(stderr, "不支持的浮点运算: %s\n", op); exit(1); }
+    } else if (strcmp(op,"+")==0) cg_emit(cg, is_double ? "DADD DP0, DP1" : "FADD FP0, FP1");
     else if (strcmp(op,"-")==0) cg_emit(cg, is_double ? "DSUB DP0, DP1" : "FSUB FP0, FP1");
     else if (strcmp(op,"*")==0) cg_emit(cg, is_double ? "DMUL DP0, DP1" : "FMUL FP0, FP1");
     else if (strcmp(op,"/")==0) cg_emit(cg, is_double ? "DDIV DP0, DP1" : "FDIV FP0, FP1");
@@ -1742,12 +1867,32 @@ static void gen_assign(CodeGen *cg, Expr *e) {
         cg_emit(cg, "JNZ");
         return;
     }
+    if (e->l->kind == EXPR_MEMBER) {
+        MemberDef *lm = expr_member_def(cg, e->l);
+        if (lm && lm->is_bitfield) {
+            if (strcmp(e->op, "=") != 0) {
+                fprintf(stderr, "line %d: 位域暂不支持复合赋值\n", e->line);
+                exit(1);
+            }
+            gen_expr(cg, e->r);
+            gen_lvalue_addr(cg, e->l);
+            emit_store_bitfield(cg, lm);
+            return;
+        }
+    }
     int lhs_size = expr_size(cg, e->l);
     int lhs_float = expr_is_float(cg, e->l);
     int lhs_double = expr_is_double(cg, e->l);
     int lhs_bool = expr_is_bool(cg, e->l);
 
     gen_expr(cg, e->r);
+    if (lhs_size == 10 && lhs_double) {
+        emit_conv_to_long_double(cg, e->r);
+        gen_lvalue_addr(cg, e->l);
+        cg_emit(cg, "MOV B, A");
+        cg_emit(cg, "EST *B, EP0");
+        return;
+    }
     if (lhs_float) {
         emit_conv_to_float(cg, e->r);
         gen_lvalue_addr(cg, e->l);
@@ -1827,7 +1972,7 @@ static void gen_assign(CodeGen *cg, Expr *e) {
 static int expr_size(CodeGen *cg, Expr *e) {
     if (!e) return 4;
     switch (e->kind) {
-        case EXPR_NUM: return e->type_size == 8 ? 8 : 4;
+        case EXPR_NUM: return e->type_size;
         case EXPR_REGDIR: return 4;
         case EXPR_STR: return 4;
         case EXPR_SIZEOF: return 4;
@@ -1853,6 +1998,7 @@ static int expr_size(CodeGen *cg, Expr *e) {
                 strcmp(e->op,"<=")==0 || strcmp(e->op,">")==0 || strcmp(e->op,">=")==0 ||
                 strcmp(e->op,"&&")==0 || strcmp(e->op,"||")==0) return 4;
             int l = expr_size(cg, e->l), r = expr_size(cg, e->r);
+            if (l == 10 || r == 10) return 10;
             return (l == 8 || r == 8) ? 8 : 4;
         }
         case EXPR_UNARY:
@@ -1861,7 +2007,16 @@ static int expr_size(CodeGen *cg, Expr *e) {
             return expr_size(cg, e->r);
         case EXPR_ASSIGN: return expr_size(cg, e->l);
         case EXPR_INCDEC: return expr_size(cg, e->r ? e->r : e->l);
-        case EXPR_CAST: return e->is_double ? 8 : (e->is_float ? 4 : (e->type_size > 0 ? e->type_size : 4));
+        case EXPR_CAST: return e->is_double ? (e->type_size == 10 ? 10 : 8) : (e->is_float ? 4 : (e->type_size > 0 ? e->type_size : 4));
+        case EXPR_CALL: {
+            if (e->name) {
+                for (int i = 0; i < cg->prog->nfuncs; i++) {
+                    if (strcmp(cg->prog->funcs[i].name, e->name) == 0)
+                        return cg->prog->funcs[i].ret_size;
+                }
+            }
+            return 4;
+        }
         default: return 4;
     }
 }
@@ -1940,6 +2095,15 @@ static int expr_is_float(CodeGen *cg, Expr *e) {
         case EXPR_ASSIGN: return expr_is_float(cg, e->l);
         case EXPR_INCDEC: return expr_is_float(cg, e->r ? e->r : e->l);
         case EXPR_CAST: return e->is_float;
+        case EXPR_CALL: {
+            if (e->name) {
+                for (int i = 0; i < cg->prog->nfuncs; i++) {
+                    if (strcmp(cg->prog->funcs[i].name, e->name) == 0)
+                        return cg->prog->funcs[i].ret_float && cg->prog->funcs[i].ret_ptr_depth == 0;
+                }
+            }
+            return 0;
+        }
         default: return 0;
     }
 }
@@ -1973,6 +2137,15 @@ static int expr_is_double(CodeGen *cg, Expr *e) {
         case EXPR_ASSIGN: return expr_is_double(cg, e->l);
         case EXPR_INCDEC: return expr_is_double(cg, e->r ? e->r : e->l);
         case EXPR_CAST: return e->is_double;
+        case EXPR_CALL: {
+            if (e->name) {
+                for (int i = 0; i < cg->prog->nfuncs; i++) {
+                    if (strcmp(cg->prog->funcs[i].name, e->name) == 0)
+                        return cg->prog->funcs[i].ret_double && cg->prog->funcs[i].ret_ptr_depth == 0;
+                }
+            }
+            return 0;
+        }
         default: return 0;
     }
 }
@@ -2153,6 +2326,11 @@ static void gen_expr(CodeGen *cg, Expr *e) {
                 float fv = (float)e->fval;
                 memcpy(&bits, &fv, sizeof(bits));
                 cg_emit(cg, "FLDI FP0, 0x%08X", bits);
+            } else if (e->is_double && e->type_size == 10) {
+                unsigned long long lo;
+                unsigned int hi;
+                double_to_ext80(e->fval, &lo, &hi);
+                cg_emit(cg, "ELDI EP0, 0x%04X%016llX", hi, lo);
             } else if (e->is_double) {
                 uint64_t bits;
                 double dv = e->fval;
@@ -2193,7 +2371,10 @@ static void gen_expr(CodeGen *cg, Expr *e) {
                 cg_emit(cg, "LR DWORD A, *A");
                 break;
             }
-            if (var_is_float(cg, e)) {
+            if (var_size(cg, e) == 10) {
+                var_addr(cg, e);
+                cg_emit(cg, "ELD EP0, *A");
+            } else if (var_is_float(cg, e)) {
                 var_addr(cg, e);
                 cg_emit(cg, "FLD FP0, *A");
             } else if (var_is_double(cg, e)) {
@@ -2210,7 +2391,9 @@ static void gen_expr(CodeGen *cg, Expr *e) {
             }
             if (strcmp(e->op, "*") == 0) {
                 gen_expr(cg, e->r);
-                if (expr_elem_is_float(cg, e->r)) {
+                if (expr_elem_size(cg, e->r) == 10) {
+                    cg_emit(cg, "ELD EP0, *A");
+                } else if (expr_elem_is_float(cg, e->r)) {
                     cg_emit(cg, "FLD FP0, *A");
                 } else if (expr_elem_is_double(cg, e->r)) {
                     cg_emit(cg, "DLD DP0, *A");
@@ -2220,7 +2403,8 @@ static void gen_expr(CodeGen *cg, Expr *e) {
                 break;
             }
             gen_expr(cg, e->r);
-            if (strcmp(e->op, "-")==0) cg_emit(cg, "MNE DWORD A");
+            if (strcmp(e->op, "-")==0 && expr_size(cg, e->r) == 10) cg_emit(cg, "ENEG EP0");
+            else if (strcmp(e->op, "-")==0) cg_emit(cg, "MNE DWORD A");
             else if (strcmp(e->op, "~")==0) cg_emit(cg, "NEG A");
             else if (strcmp(e->op, "!")==0) {
                 const char *l1 = cg_new_label(cg, "NOT");
@@ -2244,7 +2428,9 @@ static void gen_expr(CodeGen *cg, Expr *e) {
                 /* 多维数组下标后仍是数组：保留地址（退化为指针） */
                 break;
             }
-            if (expr_elem_is_float(cg, e->l)) {
+            if (expr_elem_size(cg, e->l) == 10) {
+                cg_emit(cg, "ELD EP0, *A");
+            } else if (expr_elem_is_float(cg, e->l)) {
                 cg_emit(cg, "FLD FP0, *A");
             } else if (expr_elem_is_double(cg, e->l)) {
                 cg_emit(cg, "DLD DP0, *A");
@@ -2255,11 +2441,17 @@ static void gen_expr(CodeGen *cg, Expr *e) {
         case EXPR_MEMBER: {
             MemberDef *m = expr_member_def(cg, e);
             gen_lvalue_addr(cg, e);
+            if (m && m->is_bitfield) {
+                emit_load_bitfield(cg, m);
+                break;
+            }
             if (m && (m->is_array || (m->is_struct && m->ptr_depth == 0))) {
                 /* 数组成员退化为指针；结构体成员右值给出地址 */
                 break;
             }
-            if (m && m->is_float) {
+            if (m && m->size == 10 && m->ptr_depth == 0) {
+                cg_emit(cg, "ELD EP0, *A");
+            } else if (m && m->is_float) {
                 cg_emit(cg, "FLD FP0, *A");
             } else if (m && m->is_double) {
                 cg_emit(cg, "DLD DP0, *A");
@@ -2305,7 +2497,8 @@ static void gen_expr(CodeGen *cg, Expr *e) {
             break;
         case EXPR_CAST:
             gen_expr(cg, e->r);
-            if (e->is_float) emit_conv_to_float(cg, e->r);
+            if (e->is_double && e->type_size == 10) emit_conv_to_long_double(cg, e->r);
+            else if (e->is_float) emit_conv_to_float(cg, e->r);
             else if (e->is_double) emit_conv_to_double(cg, e->r);
             else emit_conv_to_int(cg, e->r);
             break;
@@ -2505,8 +2698,7 @@ static void gen_stmt(CodeGen *cg, Stmt *s) {
                 cg_push_loop(cg, end, end);
                 gen_stmt(cg, it->body);
                 cg_pop_loop(cg);
-                cg_emit(cg, "LET E, DWORD %s", end);
-                cg_emit(cg, "JMP");
+                /* 不在这里跳转到 end：支持 C 的 case 穿透（fallthrough） */
             }
             cg_emit(cg, "%s:", end);
             free(labels);
@@ -2717,6 +2909,22 @@ static void emit_static_local_data(CodeGen *cg, Stmt *s) {
         cg->data_off += sz;
         return;
     }
+    if (sz == 10) {
+        if (s->expr && s->expr->kind == EXPR_NUM && s->expr->is_double && s->expr->type_size == 10) {
+            unsigned long long lo;
+            unsigned int hi;
+            double_to_ext80(s->expr->fval, &lo, &hi);
+            for (int i = 0; i < 8; i++)
+                fprintf(cg->out, "\tDB %d, 0x%02X\n", cg->data_off + i, (int)((lo >> (8 * i)) & 0xff));
+            fprintf(cg->out, "\tDB %d, 0x%02X\n", cg->data_off + 8, hi & 0xff);
+            fprintf(cg->out, "\tDB %d, 0x%02X\n", cg->data_off + 9, (hi >> 8) & 0xff);
+            cg->data_off += sz;
+        } else {
+            fprintf(cg->out, "\tRESB %d\n", sz);
+            cg->data_off += sz;
+        }
+        return;
+    }
     long long val = (s->expr && s->expr->kind == EXPR_NUM) ? s->expr->ival : 0;
     if (sz == 8) {
         fprintf(cg->out, "\tDD %d, %lld\n", cg->data_off, val);
@@ -2797,7 +3005,9 @@ int generate_code(Program *p, const char *outpath, char **err) {
             if (count <= 0) count = 1;
             for (int e = 0; e < count; e++) {
                 long long val = e < g->n_init_list ? g->init_list[e] : 0;
-                if (unit == 8) {
+                if (unit == 10) {
+                    fprintf(out, "\tRESB %d\n", unit);
+                } else if (unit == 8) {
                     fprintf(out, "\tDD %d, %lld\n", cg.data_off, val);
                     fprintf(out, "\tDD %d, %lld\n", cg.data_off + 4, (long long)((unsigned long long)val >> 32));
                 } else if (unit == 1) {
@@ -2822,7 +3032,19 @@ int generate_code(Program *p, const char *outpath, char **err) {
         if (count <= 0) count = 1;
         for (int e = 0; e < count; e++) {
             int val = (g->has_init && !g->is_array && e == 0) ? g->init : 0;
-            if (unit == 8) {
+            if (unit == 10) {
+                if (g->has_init && !g->is_array) {
+                    unsigned long long lo;
+                    unsigned int hi;
+                    double_to_ext80(g->init_f, &lo, &hi);
+                    for (int i = 0; i < 8; i++)
+                        fprintf(out, "\tDB %d, 0x%02X\n", cg.data_off + i, (int)((lo >> (8 * i)) & 0xff));
+                    fprintf(out, "\tDB %d, 0x%02X\n", cg.data_off + 8, hi & 0xff);
+                    fprintf(out, "\tDB %d, 0x%02X\n", cg.data_off + 9, (hi >> 8) & 0xff);
+                } else {
+                    fprintf(out, "\tRESB %d\n", unit);
+                }
+            } else if (unit == 8) {
                 fprintf(out, "\tDD %d, %d\n", cg.data_off, val);
                 fprintf(out, "\tDD %d, 0\n", cg.data_off + 4);
             } else if (unit == 1) {

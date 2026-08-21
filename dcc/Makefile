@@ -60,12 +60,26 @@ test: all
 	./dcc tests/isr_static.c /tmp/dcc-isr_static.asm
 	../dasm/dasm /tmp/dcc-isr_static.asm /tmp/dcc-isr_static.code /tmp/dcc-isr_static.data
 	./dcc tests/vararg_switch.c /tmp/dcc-vararg_switch.asm
+	./dcc tests/long_double.c /tmp/dcc-long_double.asm
+	./dcc tests/anonymous_struct_union.c /tmp/dcc-anonymous_struct_union.asm
+	./dcc tests/switch_fallthrough.c /tmp/dcc-switch_fallthrough.asm
+	./dcc tests/char_octal.c /tmp/dcc-char_octal.asm
+	./dcc tests/vararg_macro.c /tmp/dcc-vararg_macro.asm
+	./dcc tests/struct_by_value.c /tmp/dcc-struct_by_value.asm
+	./dcc tests/bitfield.c /tmp/dcc-bitfield.asm
+	../dasm/dasm /tmp/dcc-bitfield.asm /tmp/dcc-bitfield.code /tmp/dcc-bitfield.data
+	../dasm/dasm /tmp/dcc-struct_by_value.asm /tmp/dcc-struct_by_value.code /tmp/dcc-struct_by_value.data
+	../dasm/dasm /tmp/dcc-vararg_macro.asm /tmp/dcc-vararg_macro.code /tmp/dcc-vararg_macro.data
+	../dasm/dasm /tmp/dcc-char_octal.asm /tmp/dcc-char_octal.code /tmp/dcc-char_octal.data
+	../dasm/dasm /tmp/dcc-switch_fallthrough.asm /tmp/dcc-switch_fallthrough.code /tmp/dcc-switch_fallthrough.data
+	../dasm/dasm /tmp/dcc-anonymous_struct_union.asm /tmp/dcc-anonymous_struct_union.code /tmp/dcc-anonymous_struct_union.data
+	../dasm/dasm /tmp/dcc-long_double.asm /tmp/dcc-long_double.code /tmp/dcc-long_double.data
 	../dasm/dasm /tmp/dcc-vararg_switch.asm /tmp/dcc-vararg_switch.code /tmp/dcc-vararg_switch.data
 
 test-elf: all
 	sh run_elf_test.sh
 
 clean:
-	rm -f dcc $(OBJ) /tmp/dcc-hello.* /tmp/dcc-types.* /tmp/dcc-long64.* /tmp/dcc-signed_types.* /tmp/dcc-float_test.* /tmp/dcc-fp_conv.* /tmp/dcc-bool_test.* /tmp/dcc-volatile_test.* /tmp/dcc-pointer_array.* /tmp/dcc-multidim_array.* /tmp/dcc-preprocess_test.* /tmp/dcc-cond_compile.* /tmp/dcc-reg_asm.* /tmp/dcc-string_literal.* /tmp/dcc-struct_test.* /tmp/dcc-typedef_union_enum.* /tmp/dcc-funcptr_void.* /tmp/dcc-auto_impl.* /tmp/dcc-sizeof_init_list.* /tmp/dcc-multi.* /tmp/dcc-storage.* /tmp/dcc-control_flow.* /tmp/dcc-isr_static.* /tmp/dcc-vararg_switch.*
+	rm -f dcc $(OBJ) /tmp/dcc-hello.* /tmp/dcc-types.* /tmp/dcc-long64.* /tmp/dcc-signed_types.* /tmp/dcc-float_test.* /tmp/dcc-fp_conv.* /tmp/dcc-bool_test.* /tmp/dcc-volatile_test.* /tmp/dcc-pointer_array.* /tmp/dcc-multidim_array.* /tmp/dcc-preprocess_test.* /tmp/dcc-cond_compile.* /tmp/dcc-reg_asm.* /tmp/dcc-string_literal.* /tmp/dcc-struct_test.* /tmp/dcc-typedef_union_enum.* /tmp/dcc-funcptr_void.* /tmp/dcc-auto_impl.* /tmp/dcc-sizeof_init_list.* /tmp/dcc-multi.* /tmp/dcc-storage.* /tmp/dcc-control_flow.* /tmp/dcc-isr_static.* /tmp/dcc-bitfield.* /tmp/dcc-struct_by_value.* /tmp/dcc-vararg_macro.* /tmp/dcc-char_octal.* /tmp/dcc-switch_fallthrough.* /tmp/dcc-anonymous_struct_union.* /tmp/dcc-long_double.* /tmp/dcc-vararg_switch.*
 
 .PHONY: all test test-elf clean
