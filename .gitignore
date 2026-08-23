@@ -19,6 +19,7 @@ build/
 *.tmp
 *.log
 *.out
+*.img
 
 # Editor/swap files
 *.swp
@@ -28,6 +29,9 @@ build/
 # OS files
 .DS_Store
 Thumbs.db
+
+.clangd
+.vscode
 
 # Python
 __pycache__/
