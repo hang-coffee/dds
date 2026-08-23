@@ -162,6 +162,24 @@ static int list_contains(char **list, int n, const char *s) {
     return 0;
 }
 
+/* 判断 path 是否与某个显式输入文件为同一文件。
+   dashash.cc 的 find_impl_for_header 返回的路径与输入路径通常写法一致；
+   这里做“去掉 ./ 前缀”的轻度归一化后按字符串比较，覆盖常见情形。 */
+static const char *strip_dot_slash(const char *p) {
+    while (p[0] == '.' && p[1] == '/' && p[2]) p += 2;
+    return p;
+}
+static int is_an_input_file(const char *path, char **inputs, int n) {
+    if (!path || !*path) return 0;
+    const char *a = strip_dot_slash(path);
+    for (int i = 0; i < n; i++) {
+        if (!inputs[i] || !*inputs[i]) continue;
+        const char *b = strip_dot_slash(inputs[i]);
+        if (strcmp(a, b) == 0) return 1;
+    }
+    return 0;
+}
+
 static char *replace_ext(const char *path, const char *ext) {
     const char *dot = strrchr(path, '.');
     const char *slash = strrchr(path, '/');
@@ -296,16 +314,21 @@ int main(int argc, char **argv) {
             preprocess_options_free(&opt);
             return 1;
         }
-        for (int j = 0; j < ir.nheaders; j++) {
-            char *impl = find_impl_for_header(ir.headers[j]);
-            if (impl && !list_contains(impls, nimpls, impl)) {
-                if (nimpls >= capimpls) {
-                    capimpls = capimpls ? capimpls * 2 : 8;
-                    impls = (char **)realloc(impls, (size_t)capimpls * sizeof(char *));
+        /* ELF 模式不自动合并头文件的实现：每个 .o 只包含自身的定义，
+           实现留作外部引用，由 dlinker 在链接期解析，避免重复定义。 */
+        if (strcmp(format, "elf") != 0) {
+            for (int j = 0; j < ir.nheaders; j++) {
+                char *impl = find_impl_for_header(ir.headers[j]);
+                if (impl && !list_contains(impls, nimpls, impl) &&
+                    !is_an_input_file(impl, (char **)argv + input_indices[0], ninputs)) {
+                    if (nimpls >= capimpls) {
+                        capimpls = capimpls ? capimpls * 2 : 8;
+                        impls = (char **)realloc(impls, (size_t)capimpls * sizeof(char *));
+                    }
+                    impls[nimpls++] = impl;
+                } else {
+                    free(impl);
                 }
-                impls[nimpls++] = impl;
-            } else {
-                free(impl);
             }
         }
         TokenArray ta = tokenize(ir.source);
@@ -338,16 +361,19 @@ int main(int argc, char **argv) {
             preprocess_options_free(&opt);
             return 1;
         }
-        for (int j = 0; j < ir.nheaders; j++) {
-            char *impl2 = find_impl_for_header(ir.headers[j]);
-            if (impl2 && !list_contains(impls, nimpls, impl2)) {
-                if (nimpls >= capimpls) {
-                    capimpls = capimpls ? capimpls * 2 : 8;
-                    impls = (char **)realloc(impls, (size_t)capimpls * sizeof(char *));
+        if (strcmp(format, "elf") != 0) {
+            for (int j = 0; j < ir.nheaders; j++) {
+                char *impl2 = find_impl_for_header(ir.headers[j]);
+                if (impl2 && !list_contains(impls, nimpls, impl2) &&
+                    !is_an_input_file(impl2, (char **)argv + input_indices[0], ninputs)) {
+                    if (nimpls >= capimpls) {
+                        capimpls = capimpls ? capimpls * 2 : 8;
+                        impls = (char **)realloc(impls, (size_t)capimpls * sizeof(char *));
+                    }
+                    impls[nimpls++] = impl2;
+                } else {
+                    free(impl2);
                 }
-                impls[nimpls++] = impl2;
-            } else {
-                free(impl2);
             }
         }
         TokenArray ita = tokenize(ir.source);
@@ -374,11 +400,11 @@ int main(int argc, char **argv) {
 
     int ok = 0;
     if (strcmp(format, "asm") == 0) {
-        ok = generate_code(&prog, out_path, &err);
+        ok = generate_code(&prog, out_path, 0, &err);
     } else {
         char *tmp_asm = (char *)malloc(strlen(out_path) + 16);
         sprintf(tmp_asm, "%s.tmp.asm", out_path);
-        ok = generate_code(&prog, tmp_asm, &err);
+        ok = generate_code(&prog, tmp_asm, strcmp(format, "elf") == 0, &err);
         if (ok) {
             char *exedir = exe_dir_of(argv[0]);
             char dasm_path[1024];

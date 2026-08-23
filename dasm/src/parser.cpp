@@ -14,7 +14,7 @@ static std::string to_lower(const std::string& s) {
 }
 
 static bool is_instruction_token(token_type type) {
-    return (type >= TOK_INSTR_LET && type <= TOK_INSTR_EPOP);
+    return (type >= TOK_INSTR_LET && type <= TOK_INSTR_TRA);
 }
 
 static bool is_size_token(token_type type) {
@@ -161,6 +161,7 @@ static bool instruction_requires_size(token_type type) {
         case TOK_INSTR_BLKIN:
         case TOK_INSTR_POR:
         case TOK_INSTR_PUSH_P:
+        case TOK_INSTR_TRA:
             return true;
         default:
             return false;
@@ -514,12 +515,13 @@ static bool validate_operands(parser_context& ctx, token_type instr_type,
         parser_error(ctx, "寄存器 P 只可用于 PUSH P");
         return false;
     }
-    // 解引用 *reg 仅 LR(op2)/ST(op1)/POR(op1) 允许；偏移 +N 仅 LR(op2)/ST(op1)
+    // 解引用 *reg 仅 LR(op2)/ST(op1)/POR(op1)/TRA 允许；偏移 +N 仅 LR(op2)/ST(op1)
     bool deref_ok1 = (instr_type == TOK_INSTR_ST || instr_type == TOK_INSTR_POR ||
                       instr_type == TOK_INSTR_FST || instr_type == TOK_INSTR_DST ||
-                      instr_type == TOK_INSTR_EST);
+                      instr_type == TOK_INSTR_EST || instr_type == TOK_INSTR_TRA);
     bool deref_ok2 = (instr_type == TOK_INSTR_LR || instr_type == TOK_INSTR_FLD ||
-                      instr_type == TOK_INSTR_DLD || instr_type == TOK_INSTR_ELD);
+                      instr_type == TOK_INSTR_DLD || instr_type == TOK_INSTR_ELD ||
+                      instr_type == TOK_INSTR_TRA);
     bool off_ok1   = (instr_type == TOK_INSTR_ST);
     bool off_ok2   = (instr_type == TOK_INSTR_LR);
     if (op1.is_deref && !deref_ok1) { parser_error(ctx, "该指令不支持 * 解引用操作数"); return false; }
@@ -934,6 +936,15 @@ bool parser_pass2(parser_context& ctx) {
                         generator_add_relocation(*ctx.gen, dv.extern_name, addr,
                                                  ctx.gen->current_segment, bytes);
                     }
+                    /* 本地标号的数据引用：同样生成重定位，供 dlinker 在非零基址下修正 */
+                    if (!dv.has_extern && bytes <= 4 && dv.terms.size() == 1 &&
+                        dv.terms[0]->type == TOK_LABEL_REF) {
+                        const symbol* lsym = symbol_lookup(*ctx.symtab, dv.terms[0]->text);
+                        if (lsym && !lsym->external) {
+                            generator_add_relocation(*ctx.gen, dv.terms[0]->text,
+                                                     addr, ctx.gen->current_segment, bytes);
+                        }
+                    }
                     generator_pad_to(*ctx.gen, addr);
                     generator_emit_immediate(*ctx.gen, static_cast<uint32_t>(dv_value), bytes);
                     symbol_advance(*ctx.symtab, (addr - cur) + bytes);
@@ -1118,6 +1129,26 @@ bool parser_pass2(parser_context& ctx) {
                 uint32_t reloc_off = symbol_get_current_address(*ctx.symtab) + imm_start;
                 generator_add_relocation(*ctx.gen, ext_name, reloc_off,
                                          ctx.gen->current_segment, size_bytes);
+            }
+
+            // 本地标号引用：也为 ELF 链接生成重定位（dlinker 据此修正非零基址下的地址）。
+            // 仅处理“单个本地标号 ± 偏移”的常见形式（dcc 生成 `LET A,E,DWORD label` 时即此形式）。
+            {
+                auto add_local_reloc = [&](const parsed_operand& op) {
+                    if (!op.is_imm || !op.imm_ex.valid || op.imm_ex.terms.empty()) return;
+                    if (op.imm_ex.terms.size() == 1 &&
+                        op.imm_ex.terms[0]->type == TOK_LABEL_REF) {
+                        const symbol* lsym = symbol_lookup(*ctx.symtab, op.imm_ex.terms[0]->text);
+                        if (lsym && !lsym->external) {
+                            uint32_t imm_start = static_cast<uint32_t>(result.bytes.size() - size_bytes);
+                            uint32_t reloc_off = symbol_get_current_address(*ctx.symtab) + imm_start;
+                            generator_add_relocation(*ctx.gen, op.imm_ex.terms[0]->text,
+                                                     reloc_off, ctx.gen->current_segment, size_bytes);
+                        }
+                    }
+                };
+                add_local_reloc(op1);
+                add_local_reloc(op2);
             }
 
             generator_emit_bytes(*ctx.gen, result.bytes.data(), result.bytes.size());

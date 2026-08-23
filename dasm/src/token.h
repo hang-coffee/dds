@@ -131,6 +131,7 @@ enum token_type {
     TOK_INSTR_E2D,
     TOK_INSTR_EPUSH,
     TOK_INSTR_EPOP,
+    TOK_INSTR_TRA,
 
     TOK_PSEUDO_SECTION,
     TOK_PSEUDO_DB,

@@ -45,7 +45,7 @@ static void print_help(FILE *out) {
 	fprintf(out,
 		"用法: %s [选项] [-f [code <code.bin>] [data <data.bin>]]\n"
 		"\n"
-		"DOCTOR 架构模拟器 (Architecture v3.3)\n"
+		"DOCTOR 架构模拟器\n"
 		"\n"
 		"选项:\n"
 		"  -f, --file [code <文件>] [data <文件>]   指定代码/数据镜像文件并启动。\n"
@@ -59,6 +59,7 @@ static void print_help(FILE *out) {
 		"  --display-size <宽x高>                   帧缓冲尺寸（默认 320x200）。\n"
 		"  -d, --disk <raw_file>                     加载 DISK 块设备镜像（raw）。\n"
 		"  --dump-devices                            启动时打印设备状态（诊断用）。\n"
+		"  -s, --stopped							在模拟器启动时立刻停机\n"
 		"  -h, --help                               显示本帮助信息并退出。\n"
 		"  -v, --version                            显示版本信息并退出。\n"
 		"\n"
@@ -69,7 +70,7 @@ static void print_help(FILE *out) {
 }
 
 static void print_version(void) {
-	printf("%s %s (DOCTOR Architecture v3.3)\n", PROGRAM_NAME, DOCTOR_EMU_VERSION);
+	printf("%s %s \n", PROGRAM_NAME, DOCTOR_EMU_VERSION);
 	printf("Copyright (C) 2026 Hangco. GNU GPL v3.\n");
 	return;
 }
@@ -91,6 +92,10 @@ int main(int argc, char *argv[]) {
 	// ---- 命令行解析 ----
 	for(int i=1; i<argc; i++) {
 		const char *arg=argv[i];
+		if(strcmp(arg, "-s")==0 || strcmp(arg, "--stopped")==0) {
+			sim_paused=1;
+			continue;
+		}
 
 		if(strcmp(arg, "-h")==0 || strcmp(arg, "--help")==0) {
 			print_help(stdout);

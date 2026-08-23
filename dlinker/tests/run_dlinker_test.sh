@@ -107,7 +107,19 @@ ASM
 fi
 
 # ---- 3. --no-fallback 拒绝旧格式 ----
-if $DLINKER --no-fallback -o "$T/nf" "$T/a.o" >/dev/null 2>&1; then
+# 注：dasm 现在会对本地标号引用也生成重定位，因此构造一个真正
+# 不含任何标号引用的纯数据/纯立即数对象来测试 --no-fallback。
+cat > "$T/noreloc.asm" <<'ASM'
+SECTION TEXT
+ORG 0
+    LET A, DWORD 0x1234
+    HLT
+SECTION DATA
+ORG 0
+    DD 0, 0x55
+ASM
+$DASM -m elf "$T/noreloc.asm" "$T/noreloc.o" >/dev/null
+if $DLINKER --no-fallback -o "$T/nf" "$T/noreloc.o" >/dev/null 2>&1; then
     echo "FAIL: --no-fallback 应拒绝无重定位表输入"
     fail=$((fail+1))
 else

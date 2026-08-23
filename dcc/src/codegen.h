@@ -3,6 +3,6 @@
 
 #include "ast.h"
 
-int generate_code(Program *p, const char *outpath, char **err);
+int generate_code(Program *p, const char *outpath, int emit_extern, char **err);
 
 #endif

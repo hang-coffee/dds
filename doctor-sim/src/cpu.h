@@ -45,7 +45,8 @@ typedef enum {
 	F2D, D2F,
 	EMOV, ELDI, ELD, EST, EADD, ESUB, EMUL, EDIV,
 	ESQRT, ENEG, EABS, ECMP, E2I, I2E,
-	F2E, E2F, D2E, E2D, EPUSH, EPOP
+	F2E, E2F, D2E, E2D, EPUSH, EPOP,
+	TRA,
 } Instr_index;	// 指令集
 
 typedef struct {

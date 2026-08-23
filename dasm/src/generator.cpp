@@ -198,7 +198,14 @@ bool generator_write_elf(const generator_context& gen, const symbol_table& symta
             out.push_back(0x10); // STB_GLOBAL | STT_NOTYPE
             first_global = std::min(first_global, i + 1);
         } else {
-            out.push_back(sym.segment == SEG_TEXT ? 0x12 : 0x11); // STB_LOCAL
+			bool is_local=(syms[i].name.compare(0, 2, ".L")==0);
+			unsigned char type=(sym.segment==SEG_TEXT)?2:1; // STT_FUNC / STT_OBJECT
+            unsigned char bind=is_local?0:1;
+			unsigned char st_info=(bind<<4)|type;
+			out.push_back(st_info);
+			if(!is_local) {
+				first_global=std::min(first_global, i+1);
+			}
         }
         out.push_back(0);
         put16(out, sym.external ? 0 : (sym.segment == SEG_TEXT ? 1 : 2));

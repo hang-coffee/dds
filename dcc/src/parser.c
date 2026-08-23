@@ -802,12 +802,13 @@ static Expr *parse_unary(Parser *p) {
     /* 强制类型转换 (int)/(float)/(double) expr */
     if (peek(p,0)->kind == T_OP && strcmp(peek(p,0)->text, "(") == 0) {
         Token *nt = peek(p,1);
-        int is_cast_type = nt->kind == T_KW &&
+        int is_cast_type = (nt->kind == T_KW &&
             (strcmp(nt->text,"int")==0 || strcmp(nt->text,"char")==0 ||
              strcmp(nt->text,"short")==0 || strcmp(nt->text,"long")==0 ||
              strcmp(nt->text,"unsigned")==0 || strcmp(nt->text,"signed")==0 ||
              strcmp(nt->text,"const")==0 || strcmp(nt->text,"float")==0 ||
-             strcmp(nt->text,"double")==0 || strcmp(nt->text,"void")==0);
+             strcmp(nt->text,"double")==0 || strcmp(nt->text,"void")==0)) ||
+            (nt->kind == T_ID && parser_find_typedef(p, nt->text) != NULL);
         if (is_cast_type) {
             next(p); /* ( */
             TypeInfo ty = parse_type_spec(p);

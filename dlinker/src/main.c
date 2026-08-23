@@ -473,8 +473,18 @@ static int apply_one_relocation(const Relocation *rel, const Object *obj,
         return 1;
     }
 
-    uint32_t addend = rel->has_explicit_addend ? (uint32_t)rel->addend
-                                               : read_reloc_field(buf, pos, width);
+    uint32_t addend;
+    if (rel->has_explicit_addend) {
+        addend = (uint32_t)rel->addend;
+    } else if (!(sym->shndx == SHN_UNDEF) && !(sym->shndx == SHN_ABS)) {
+        /* 同一对象内已定义符号：字段中已包含对象内偏移 sym->value，
+           sym_addr 也已经包含 sym->value，因此 addend 只取“超出符号值的部分”
+           （例如 label+4 时 =4，纯 label 时 =0），避免重复加。 */
+        uint32_t field = read_reloc_field(buf, pos, width);
+        addend = (field >= sym->value) ? (field - sym->value) : field;
+    } else {
+        addend = read_reloc_field(buf, pos, width);
+    }
     uint32_t value = sym_addr + addend;
     if (pc_relative) {
         uint32_t place = base + rel->offset;

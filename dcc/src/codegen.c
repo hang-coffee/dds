@@ -154,7 +154,7 @@ static void cg_emit(CodeGen *cg, const char *fmt, ...) {
 static char *cg_new_label(CodeGen *cg, const char *prefix) {
     char *buf = (char *)malloc(64);
     cg->label++;
-    snprintf(buf, 64, "%s%d", prefix, cg->label);
+    snprintf(buf, 64, ".L%s%d", prefix, cg->label);
     return buf;
 }
 
@@ -167,7 +167,7 @@ static const char *cg_str_label(CodeGen *cg, const char *str) {
         cg->strings = (StrEntry *)realloc(cg->strings, (size_t)cg->capstrings * sizeof(StrEntry));
     }
     char label[32];
-    snprintf(label, sizeof(label), "str%d", cg->str_cnt++);
+    snprintf(label, sizeof(label), ".Lstr%d", cg->str_cnt++);
     cg->strings[cg->nstrings].str = xstrdup(str);
     cg->strings[cg->nstrings].label = xstrdup(label);
     return cg->strings[cg->nstrings++].label;
@@ -624,6 +624,33 @@ static ParamInfo *param_info(CodeGen *cg, const char *name) {
     return NULL;
 }
 
+/* ---- -O1 帧相对寻址 ----
+ * 局部变量/参数在栈帧中以 F 为基址：局部在 F+N（N>=0），参数在 F-N。
+ * 利用 LR/ST 的 *reg+N 偏移直接读写，省去 MOV A,F; ADD/SUB; MOV B,A 等冗长序列。 */
+
+/* 获取 name 的帧槽位：命中（非 static 的局部变量/参数）返回 1，
+   *off 为相对 F 的有符号偏移（局部为正、参数为负），*sz 为槽位尺寸；
+   static 局部、全局或未定义返回 0。 */
+static int frame_slot(CodeGen *cg, const char *name, int *off, int *sz) {
+    VarInfo *li = local_info(cg, name);
+    if (li && li->static_label) return 0;          // static 局部 → DATA 段
+    int lo = local_offset(cg, name);
+    if (lo >= 0) { *off = lo; *sz = li ? li->size : 4; return 1; }
+    ParamInfo *pi = param_info(cg, name);
+    int po = param_offset(cg, name);
+    if (po >= 0) { *off = -po; *sz = pi ? pi->size : 4; return 1; }
+    return 0;
+}
+
+/* LR/ST 的 *F±N 偏移按尺寸符号扩展：BYTE -128..127，WORD -32768..32767，
+   DWORD 全 32 位。8 字节访问拆为两条 DWORD（全范围）。 */
+static int frame_off_ok(int off, int access_size) {
+    int s = (access_size == 8) ? 4 : access_size;
+    if (s == 1) return (off >= -128 && off <= 127);
+    if (s == 2) return (off >= -32768 && off <= 32767);
+    return 1;
+}
+
 static void cg_push_loop(CodeGen *cg, const char *brk, const char *cont) {
     if (cg->nloops >= cg->caploops) {
         cg->caploops = cg->caploops ? cg->caploops * 2 : 8;
@@ -983,10 +1010,49 @@ static void gen_incdec(CodeGen *cg, Expr *e, int postfix) {
         if (postfix) cg_emit(cg, "POP DWORD A");
         return;
     }
-    gen_lvalue_addr(cg, target);
-    cg_emit(cg, "MOV B, A");
     int sz = expr_size(cg, target);
     int step = expr_is_pointer(cg, target) ? expr_elem_size(cg, target) : 1;
+    int off, slot_sz;
+    /* -O1 帧相对：LR *F±N → 自增/减 → ST *F±N（64 位保持原路径） */
+    if (target->kind == EXPR_VAR && sz != 8 &&
+        frame_slot(cg, target->name, &off, &slot_sz) && frame_off_ok(off, sz)) {
+        if (sz == 1) {
+            cg_emit(cg, "LR BYTE A, *F%+d", off);
+            if (!expr_unsigned(cg, target)) {
+                cg_emit(cg, "SHL DWORD A, 24");
+                cg_emit(cg, "MSR DWORD A, 24");
+            }
+        } else if (sz == 2) {
+            cg_emit(cg, "LR WORD A, *F%+d", off);
+            if (!expr_unsigned(cg, target)) {
+                cg_emit(cg, "SHL DWORD A, 16");
+                cg_emit(cg, "MSR DWORD A, 16");
+            }
+        } else {
+            cg_emit(cg, "LR DWORD A, *F%+d", off);
+        }
+        if (postfix) cg_emit(cg, "PUSH DWORD A");
+        if (strcmp(e->op, "+") == 0) {
+            if (step == 1) cg_emit(cg, "ADD DWORD A, 1");
+            else if (step == 2) cg_emit(cg, "ADD DWORD A, 2");
+            else if (step == 4) cg_emit(cg, "ADD DWORD A, 4");
+            else if (step == 8) cg_emit(cg, "ADD DWORD A, 8");
+            else cg_emit(cg, "ADD DWORD A, %d", step);
+        } else {
+            if (step == 1) cg_emit(cg, "SUB DWORD A, 1");
+            else if (step == 2) cg_emit(cg, "SUB DWORD A, 2");
+            else if (step == 4) cg_emit(cg, "SUB DWORD A, 4");
+            else if (step == 8) cg_emit(cg, "SUB DWORD A, 8");
+            else cg_emit(cg, "SUB DWORD A, %d", step);
+        }
+        if (sz == 1) cg_emit(cg, "ST BYTE *F%+d, A", off);
+        else if (sz == 2) cg_emit(cg, "ST WORD *F%+d, A", off);
+        else cg_emit(cg, "ST DWORD *F%+d, A", off);
+        if (postfix) cg_emit(cg, "POP DWORD A");
+        return;
+    }
+    gen_lvalue_addr(cg, target);
+    cg_emit(cg, "MOV B, A");
     emit_load_from_b(cg, sz, expr_unsigned(cg, target));
     if (postfix) cg_emit(cg, "PUSH DWORD A");
     if (strcmp(e->op, "+") == 0) {
@@ -1664,6 +1730,90 @@ static void gen_fp_binop(CodeGen *cg, Expr *e) {
     else { fprintf(stderr, "不支持的浮点运算: %s\n", op); exit(1); }
 }
 
+/* ---- -O1 常量折叠 ----
+ * 编译期求值“无副作用整型常量表达式”，直接生成 LET/ZERO 载入结果，
+ * 避免生成运行时算术指令。除零/非法移位等回退为运行时求值（保持原语义）。 */
+
+/* 输出编译期常量到 A（8 字节则同时写入 D1 高 32 位） */
+static void emit_const_result(CodeGen *cg, unsigned long long v, int sz) {
+    if (sz == 8) {
+        uint32_t lo = (uint32_t)(v & 0xffffffffULL);
+        uint32_t hi = (uint32_t)((v >> 32) & 0xffffffffULL);
+        if (lo == 0 && hi == 0) { cg_emit(cg, "ZERO A"); cg_emit(cg, "ZERO D1"); return; }
+        cg_emit(cg, "LET A, DWORD 0x%X", lo);
+        cg_emit(cg, "LET D1, DWORD 0x%X", hi);
+        return;
+    }
+    uint32_t u = (uint32_t)v;
+    if (u == 0) { cg_emit(cg, "ZERO A"); return; }
+    cg_emit(cg, "LET A, DWORD 0x%X", u);
+}
+
+/* 递归求值常量整型表达式；成功返回 1 且 *out 为结果（已按宽度截断）。
+ * 符号/宽度语义与 gen_binop 保持一致（expr_unsigned/expr_size）。 */
+static int expr_const_int(CodeGen *cg, Expr *e, unsigned long long *out) {
+    if (!e) return 0;
+    switch (e->kind) {
+        case EXPR_NUM:
+            if (e->is_float || e->is_double) return 0;
+            *out = (unsigned long long)e->ival;
+            return 1;
+        case EXPR_UNARY: {
+            if (strcmp(e->op, "&") == 0 || strcmp(e->op, "*") == 0) return 0;
+            unsigned long long v;
+            if (!expr_const_int(cg, e->r, &v)) return 0;
+            if (strcmp(e->op, "-") == 0) *out = 0ULL - v;
+            else if (strcmp(e->op, "+") == 0) *out = v;
+            else if (strcmp(e->op, "~") == 0) *out = ~v;
+            else if (strcmp(e->op, "!") == 0) *out = (v == 0) ? 1 : 0;
+            else return 0;
+            return 1;
+        }
+        case EXPR_BIN: {
+            unsigned long long a, b;
+            if (!expr_const_int(cg, e->l, &a)) return 0;
+            if (!expr_const_int(cg, e->r, &b)) return 0;
+            const char *op = e->op;
+            int uns = expr_unsigned(cg, e);   /* 与 gen_binop 符号语义一致 */
+            if (strcmp(op, "+") == 0) *out = a + b;
+            else if (strcmp(op, "-") == 0) *out = a - b;
+            else if (strcmp(op, "*") == 0) *out = a * b;
+            else if (strcmp(op, "/") == 0) {
+                if (b == 0) return 0;   /* 除零回退为运行时（触发 #DIV） */
+                *out = uns ? (a / b) : (unsigned long long)((long long)a / (long long)b);
+            }
+            else if (strcmp(op, "%") == 0) {
+                if (b == 0) return 0;
+                *out = uns ? (a % b) : (unsigned long long)((long long)a % (long long)b);
+            }
+            else if (strcmp(op, "<<") == 0) { if (b >= 64) return 0; *out = a << b; }
+            else if (strcmp(op, ">>") == 0) {
+                if (b >= 64) return 0;
+                *out = uns ? (a >> b) : (unsigned long long)((long long)a >> b);
+            }
+            else if (strcmp(op, "&") == 0) *out = a & b;
+            else if (strcmp(op, "|") == 0) *out = a | b;
+            else if (strcmp(op, "^") == 0) *out = a ^ b;
+            else if (strcmp(op, "==") == 0) *out = (a == b) ? 1 : 0;
+            else if (strcmp(op, "!=") == 0) *out = (a != b) ? 1 : 0;
+            else if (strcmp(op, "<") == 0) *out = (uns ? (a < b) : ((long long)a < (long long)b)) ? 1 : 0;
+            else if (strcmp(op, "<=") == 0) *out = (uns ? (a <= b) : ((long long)a <= (long long)b)) ? 1 : 0;
+            else if (strcmp(op, ">") == 0) *out = (uns ? (a > b) : ((long long)a > (long long)b)) ? 1 : 0;
+            else if (strcmp(op, ">=") == 0) *out = (uns ? (a >= b) : ((long long)a >= (long long)b)) ? 1 : 0;
+            else if (strcmp(op, "&&") == 0) *out = (a != 0 && b != 0) ? 1 : 0;
+            else if (strcmp(op, "||") == 0) *out = (a != 0 || b != 0) ? 1 : 0;
+            else return 0;
+            int sz = expr_size(cg, e);
+            if (sz == 1) *out &= 0xffULL;
+            else if (sz == 2) *out &= 0xffffULL;
+            else if (sz == 4) *out &= 0xffffffffULL;
+            return 1;
+        }
+        default:
+            return 0;
+    }
+}
+
 static void gen_binop(CodeGen *cg, Expr *e) {
     const char *op = e->op;
     int has_fp = expr_is_float(cg, e->l) || expr_is_double(cg, e->l) ||
@@ -1677,15 +1827,16 @@ static void gen_binop(CodeGen *cg, Expr *e) {
         return;
     }
     if ((strcmp(op, "<<") == 0 || strcmp(op, ">>") == 0) && expr_size(cg, e) != 8) {
-        if (e->r->kind != EXPR_NUM) {
+        unsigned long long sh;
+        if (!expr_const_int(cg, e->r, &sh)) {
             fprintf(stderr, "line %d: 移位量必须是常量\n", e->line);
             exit(1);
         }
         gen_expr(cg, e->l);
         if (strcmp(op, "<<") == 0)
-            cg_emit(cg, "SHL DWORD A, %d", e->r->ival);
+            cg_emit(cg, "SHL DWORD A, %d", (int)sh);
         else
-            cg_emit(cg, (expr_unsigned(cg, e) ? "SHR DWORD A, %d" : "MSR DWORD A, %d"), e->r->ival);
+            cg_emit(cg, (expr_unsigned(cg, e) ? "SHR DWORD A, %d" : "MSR DWORD A, %d"), (int)sh);
         return;
     }
     if (strcmp(op, "&&") == 0) {
@@ -1811,6 +1962,47 @@ static void gen_binop(CodeGen *cg, Expr *e) {
     }
 }
 
+/* -O1 复合赋值：x op= e 用 A 作累加器（避免经 C，C 留给 CDI 循环计数器）。
+ * emit_compound_op_reg: A op= B；emit_compound_op_imm: A op= 立即数。 */
+static void emit_compound_op_reg(CodeGen *cg, const char *op, int uns) {
+    if (!strcmp(op, "+=")) cg_emit(cg, "ADD DWORD A, B");
+    else if (!strcmp(op, "-=")) cg_emit(cg, "SUB DWORD A, B");
+    else if (!strcmp(op, "*=")) { cg_emit(cg, "MUL DWORD A, B"); cg_emit(cg, "MOV A, D2"); }
+    else if (!strcmp(op, "/=")) { cg_emit(cg, "DIV DWORD A, B"); cg_emit(cg, "MOV A, D2"); }
+    else if (!strcmp(op, "%=")) { cg_emit(cg, "DIV DWORD A, B"); cg_emit(cg, "MOV A, D1"); }
+    else if (!strcmp(op, "&=")) cg_emit(cg, "AND DWORD A, B");
+    else if (!strcmp(op, "|=")) cg_emit(cg, "OR DWORD A, B");
+    else if (!strcmp(op, "^=")) cg_emit(cg, "XOR DWORD A, B");
+    else if (!strcmp(op, "<<=")) cg_emit(cg, "SHL DWORD A, B");
+    else if (!strcmp(op, ">>=")) cg_emit(cg, uns ? "SHR DWORD A, B" : "MSR DWORD A, B");
+}
+
+static void emit_compound_op_imm(CodeGen *cg, const char *op, long long v, int uns) {
+    if (!strcmp(op, "+=")) {
+        if (v < 0) { emit_compound_op_imm(cg, "-=", -v, uns); return; }
+        if (v == 1) cg_emit(cg, "ADD DWORD A, 1");
+        else if (v == 2) cg_emit(cg, "ADD DWORD A, 2");
+        else if (v == 4) cg_emit(cg, "ADD DWORD A, 4");
+        else cg_emit(cg, "ADD DWORD A, %lld", v);
+    } else if (!strcmp(op, "-=")) {
+        if (v < 0) { emit_compound_op_imm(cg, "+=", -v, uns); return; }
+        if (v == 1) cg_emit(cg, "SUB DWORD A, 1");
+        else if (v == 2) cg_emit(cg, "SUB DWORD A, 2");
+        else if (v == 4) cg_emit(cg, "SUB DWORD A, 4");
+        else cg_emit(cg, "SUB DWORD A, %lld", v);
+    } else {
+        cg_emit(cg, "LET B, DWORD %lld", v);
+        if (!strcmp(op, "*=")) { cg_emit(cg, "MUL DWORD A, B"); cg_emit(cg, "MOV A, D2"); }
+        else if (!strcmp(op, "/=")) { cg_emit(cg, "DIV DWORD A, B"); cg_emit(cg, "MOV A, D2"); }
+        else if (!strcmp(op, "%=")) { cg_emit(cg, "DIV DWORD A, B"); cg_emit(cg, "MOV A, D1"); }
+        else if (!strcmp(op, "&=")) cg_emit(cg, "AND DWORD A, B");
+        else if (!strcmp(op, "|=")) cg_emit(cg, "OR DWORD A, B");
+        else if (!strcmp(op, "^=")) cg_emit(cg, "XOR DWORD A, B");
+        else if (!strcmp(op, "<<=")) cg_emit(cg, "SHL DWORD A, B");
+        else if (!strcmp(op, ">>=")) cg_emit(cg, uns ? "SHR DWORD A, B" : "MSR DWORD A, B");
+    }
+}
+
 static void gen_assign(CodeGen *cg, Expr *e) {
     if (var_is_const(cg, e->l)) {
         fprintf(stderr, "line %d: 不能修改 const 变量 %s\n", e->l->line, e->l->name ? e->l->name : "?");
@@ -1822,8 +2014,17 @@ static void gen_assign(CodeGen *cg, Expr *e) {
             exit(1);
         }
         if (strcmp(e->op, "=") == 0) {
-            gen_expr(cg, e->r);
-            cg_emit(cg, "MOV %s, A", e->l->name);
+            if (strcmp(e->l->name, "A") == 0) {
+                /* 目标就是 A：直接求值即可 */
+                gen_expr(cg, e->r);
+            } else {
+                /* 目标不是 A：先保存 A，求值到 A 后写目标，再恢复 A，
+                   避免破坏之前 __reg_A 等寄存器直访设置的值 */
+                cg_emit(cg, "PUSH DWORD A");
+                gen_expr(cg, e->r);
+                cg_emit(cg, "MOV %s, A", e->l->name);
+                cg_emit(cg, "POP DWORD A");
+            }
             return;
         }
         cg_emit(cg, "MOV A, %s", e->l->name);
@@ -1845,6 +2046,25 @@ static void gen_assign(CodeGen *cg, Expr *e) {
         cg_emit(cg, "MOV %s, A", e->l->name);
         return;
     }
+    if( e->l->kind==EXPR_UNARY && strcmp(e->l->op, "*")==0 &&
+        e->r->kind==EXPR_UNARY && strcmp(e->r->op, "*")==0 &&
+        expr_size(cg, e->l)==expr_size(cg, e->r) &&
+        (expr_size(cg, e->l)==1 || expr_size(cg, e->l)==2 || expr_size(cg, e->l)==4) &&
+        !expr_is_float(cg, e->l) && !expr_is_double(cg, e->l) &&
+        !expr_is_struct(cg, e->l) && !expr_is_array(cg, e->l)) {
+            gen_expr(cg, e->r->r);          // A = 源指针（*a 的地址）
+            cg_emit(cg, "PUSH DWORD A");    // 暂存源指针
+            gen_lvalue_addr(cg, e->l);      // A = 目的指针（*b 的地址）
+            cg_emit(cg, "MOV B, A");        // B = 目的
+            cg_emit(cg, "POP DWORD A");     // A = 源
+            if(expr_size(cg, e->l)==4 && expr_size(cg, e->r)==4)
+                cg_emit(cg, "TRA DWORD *B, *A");
+            if(expr_size(cg, e->l)==2 && expr_size(cg, e->r)==2)
+                cg_emit(cg, "TRA WORD *B, *A");
+            if(expr_size(cg, e->l)==1 && expr_size(cg, e->r)==1)
+                cg_emit(cg, "TRA BYTE *B, *A");
+            return;
+        } 
     if (expr_is_struct(cg, e->l)) {
         if (strcmp(e->op, "=") != 0) {
             fprintf(stderr, "line %d: 结构体不支持复合赋值\n", e->line);
@@ -1885,6 +2105,35 @@ static void gen_assign(CodeGen *cg, Expr *e) {
     int lhs_double = expr_is_double(cg, e->l);
     int lhs_bool = expr_is_bool(cg, e->l);
 
+    /* -O1 常量复合赋值 x op= k：提前处理（常量无副作用，省去 gen_expr 求值到 A 的冗余），
+       帧相对/全局直接 LR → op imm → ST，不经 C（C 留给 CDI 循环计数器）。 */
+    if (e->l->kind == EXPR_VAR && strcmp(e->op, "=") != 0 &&
+        lhs_size == 4 && !lhs_float && !lhs_double &&
+        !expr_is_struct(cg, e->l) && !expr_is_array(cg, e->l)) {
+        unsigned long long rv;
+        if (expr_const_int(cg, e->r, &rv)) {
+            int off, slot_sz;
+            int is_ptr = expr_is_pointer(cg, e->l);
+            int esz = is_ptr ? expr_elem_size(cg, e->l) : 0;
+            long long imm = (long long)rv;
+            if (is_ptr) imm = imm * (long long)esz;      /* 指针按元素尺寸缩放 */
+            int uns = expr_unsigned(cg, e->l);
+            if (frame_slot(cg, e->l->name, &off, &slot_sz) && frame_off_ok(off, 4)) {
+                cg_emit(cg, "LR DWORD A, *F%+d", off);
+                emit_compound_op_imm(cg, e->op, imm, uns);
+                cg_emit(cg, "ST DWORD *F%+d, A", off);
+                return;
+            }
+            if (!is_ptr) {
+                var_addr(cg, e->l);
+                cg_emit(cg, "MOV B, A");
+                cg_emit(cg, "LR DWORD A, *B");
+                emit_compound_op_imm(cg, e->op, imm, uns);
+                cg_emit(cg, "ST DWORD *B, A");
+                return;
+            }
+        }
+    }
     gen_expr(cg, e->r);
     if (lhs_size == 10 && lhs_double) {
         emit_conv_to_long_double(cg, e->r);
@@ -1912,6 +2161,47 @@ static void gen_assign(CodeGen *cg, Expr *e) {
     }
     if (lhs_bool) {
         emit_bool_normalize(cg);
+    }
+    /* -O1 帧相对寻址：`x = expr` 直接 ST *F±N（值在 A，64 位高半在 D1） */
+    if (e->l->kind == EXPR_VAR && strcmp(e->op, "=") == 0 && lhs_size >= 1 && lhs_size <= 8) {
+        int off, slot_sz;
+        if (frame_slot(cg, e->l->name, &off, &slot_sz) && frame_off_ok(off, lhs_size)) {
+            if (lhs_size == 8) {
+                cg_emit(cg, "ST DWORD *F%+d, A", off);
+                cg_emit(cg, "ST DWORD *F%+d, D1", off + 4);
+            } else if (lhs_size == 1) {
+                cg_emit(cg, "ST BYTE *F%+d, A", off);
+            } else if (lhs_size == 2) {
+                cg_emit(cg, "ST WORD *F%+d, A", off);
+            } else {
+                cg_emit(cg, "ST DWORD *F%+d, A", off);
+            }
+            return;
+        }
+    }
+    /* -O1 复合赋值 x op= e（非常量 rhs，32 位标量/指针）：帧相对路径，
+       不经 C（C 留给 CDI 循环计数器），也省去地址重建。A 已含 rhs。 */
+    if (e->l->kind == EXPR_VAR && strcmp(e->op, "=") != 0 &&
+        lhs_size == 4 && !lhs_float && !lhs_double &&
+        !expr_is_struct(cg, e->l) && !expr_is_array(cg, e->l)) {
+        int off, slot_sz;
+        int is_ptr = expr_is_pointer(cg, e->l);
+        int esz = is_ptr ? expr_elem_size(cg, e->l) : 0;
+        int uns = expr_unsigned(cg, e->l);
+        if (frame_slot(cg, e->l->name, &off, &slot_sz) && frame_off_ok(off, 4)) {
+            cg_emit(cg, "PUSH DWORD A");
+            cg_emit(cg, "LR DWORD A, *F%+d", off);
+            cg_emit(cg, "POP DWORD B");
+            if (is_ptr) {
+                if (esz == 2) cg_emit(cg, "SHL DWORD B, 1");
+                else if (esz == 4) cg_emit(cg, "SHL DWORD B, 2");
+                else if (esz == 8) cg_emit(cg, "SHL DWORD B, 3");
+                else if (esz > 1) { cg_emit(cg, "LET R, DWORD %d", esz); cg_emit(cg, "MUL DWORD B, R"); cg_emit(cg, "MOV B, D2"); }
+            }
+            emit_compound_op_reg(cg, e->op, uns);
+            cg_emit(cg, "ST DWORD *F%+d, A", off);
+            return;
+        }
     }
     cg_emit(cg, "PUSH DWORD A");
     gen_lvalue_addr(cg, e->l);
@@ -2207,6 +2497,10 @@ static const char *expr_struct_name(CodeGen *cg, Expr *e) {
     if (!e) return NULL;
     switch (e->kind) {
         case EXPR_VAR: return var_struct_name(cg, e);
+        case EXPR_INDEX: return expr_struct_name(cg, e->l);
+        case EXPR_UNARY:
+            if (e->op && strcmp(e->op, "*") == 0) return expr_struct_name(cg, e->r);
+            return NULL;
         case EXPR_MEMBER: {
             MemberDef *m = expr_member_def(cg, e);
             return m ? m->struct_name : NULL;
@@ -2225,8 +2519,36 @@ static const char *expr_struct_name(CodeGen *cg, Expr *e) {
 }
 
 static void emit_load_var(CodeGen *cg, Expr *e) {
-    var_addr(cg, e);
     int sz = var_size(cg, e);
+    int off, slot_sz;
+    /* -O1 帧相对寻址：局部/参数直接用 LR *F±N 读取 */
+    if (e->kind == EXPR_VAR && frame_slot(cg, e->name, &off, &slot_sz) &&
+        frame_off_ok(off, sz)) {
+        if (sz == 8) {
+            cg_emit(cg, "LR DWORD A, *F%+d", off);
+            cg_emit(cg, "LR DWORD D1, *F%+d", off + 4);
+            return;
+        }
+        if (sz == 1) {
+            cg_emit(cg, "LR BYTE A, *F%+d", off);
+            if (!var_unsigned(cg, e)) {
+                cg_emit(cg, "SHL DWORD A, 24");
+                cg_emit(cg, "MSR DWORD A, 24");
+            }
+            return;
+        }
+        if (sz == 2) {
+            cg_emit(cg, "LR WORD A, *F%+d", off);
+            if (!var_unsigned(cg, e)) {
+                cg_emit(cg, "SHL DWORD A, 16");
+                cg_emit(cg, "MSR DWORD A, 16");
+            }
+            return;
+        }
+        cg_emit(cg, "LR DWORD A, *F%+d", off);
+        return;
+    }
+    var_addr(cg, e);
     if (sz == 8) {
         cg_emit(cg, "MOV R, A");
         cg_emit(cg, "LR DWORD A, *R");
@@ -2402,6 +2724,10 @@ static void gen_expr(CodeGen *cg, Expr *e) {
                 }
                 break;
             }
+            {   /* -O1 常量折叠：一元 - + ~ ! 作用于常量 */
+                unsigned long long cv;
+                if (expr_const_int(cg, e, &cv)) { emit_const_result(cg, cv, expr_size(cg, e)); break; }
+            }
             gen_expr(cg, e->r);
             if (strcmp(e->op, "-")==0 && expr_size(cg, e->r) == 10) cg_emit(cg, "ENEG EP0");
             else if (strcmp(e->op, "-")==0) cg_emit(cg, "MNE DWORD A");
@@ -2483,9 +2809,13 @@ static void gen_expr(CodeGen *cg, Expr *e) {
             gen_expr(cg, e->l);
             gen_expr(cg, e->r);
             break;
-        case EXPR_BIN:
+        case EXPR_BIN: {
+            /* -O1 常量折叠：整型常量表达式在编译期求值 */
+            unsigned long long cv;
+            if (expr_const_int(cg, e, &cv)) { emit_const_result(cg, cv, expr_size(cg, e)); break; }
             gen_binop(cg, e);
             break;
+        }
         case EXPR_ASSIGN:
             gen_assign(cg, e);
             break;
@@ -2503,6 +2833,206 @@ static void gen_expr(CodeGen *cg, Expr *e) {
             else emit_conv_to_int(cg, e->r);
             break;
     }
+}
+
+/* ---------- 计数循环 → CDI/JNZ 底部测试（-O1） ----------
+ * 把形如 `for(i = c0; i <op> c1; i++/i--/i+=k)` 的常量计数循环改写为：
+ *     <init i = c0>
+ *     LET C, DWORD <trip>      ; trip = 迭代次数（编译期常量）
+ *   .loop:
+ *     <body>
+ *     <inc i>                  ; 保持 i 与真实值同步
+ *     CDI                      ; C--
+ *     JNZ .loop
+ * 安全条件：trip 为常量且 >=1；循环体不写循环变量、无 break/continue/goto；
+ * body+inc 不破坏 C（逐行扫描生成的汇编，C 是循环计数器）。
+ */
+static int asm_line_clobbers_c(const char *line) {
+    const char *p = line;
+    while (*p == ' ' || *p == '\t') p++;
+    if (!*p || *p == '.' || *p == ';' || *p == '\n') return 0;   /* 空行/标号/注释 */
+    char mn[16];
+    int i = 0;
+    while (*p && *p != ' ' && *p != '\t' && i < 15) mn[i++] = *p++;
+    mn[i] = '\0';
+    while (*p == ' ' || *p == '\t') p++;
+    /* 隐式写 C 的助记符（CMP/TEST: C op= 操作数；CDI/CSI: C±1） */
+    if (!strcmp(mn, "CMP") || !strcmp(mn, "TEST") ||
+        !strcmp(mn, "CDI") || !strcmp(mn, "CSI")) return 1;
+    /* 跳过尺寸关键字 */
+    if (!strcmp(p, "BYTE") || !strcmp(p, "WORD") || !strcmp(p, "DWORD")) {
+        while (*p && *p != ' ' && *p != '\t') p++;
+        while (*p == ' ' || *p == '\t') p++;
+    }
+    /* 显式写目的寄存器的助记符：若目的为 C 则破坏计数器 */
+    static const char *dest_mn[] = {
+        "MOV", "LET", "ZERO", "POP", "LR", "ADD", "SUB", "AND", "OR", "XOR",
+        "SHL", "SHR", "MSL", "MSR", "INC", "DEC", "NEG", "MNE", "XCHG", NULL
+    };
+    int is_dest = 0;
+    for (int k = 0; dest_mn[k]; k++)
+        if (!strcmp(mn, dest_mn[k])) { is_dest = 1; break; }
+    if (!is_dest) return 0;
+    return (p[0] == 'C' && (p[1] == ',' || p[1] == ' ' || p[1] == '\t' || p[1] == '\0'));
+}
+
+static int expr_writes_var(Expr *e, const char *name) {
+    if (!e) return 0;
+    if ((e->kind == EXPR_ASSIGN || e->kind == EXPR_INCDEC) && e->l &&
+        e->l->kind == EXPR_VAR && strcmp(e->l->name, name) == 0) return 1;
+    if (e->l && expr_writes_var(e->l, name)) return 1;
+    if (e->r && expr_writes_var(e->r, name)) return 1;
+    if (e->c && expr_writes_var(e->c, name)) return 1;
+    for (int i = 0; i < e->nargs; i++)
+        if (expr_writes_var(e->args[i], name)) return 1;
+    return 0;
+}
+
+static int stmt_writes_var(Stmt *s, const char *name) {
+    if (!s) return 0;
+    if (s->expr && expr_writes_var(s->expr, name)) return 1;
+    if (s->init && expr_writes_var(s->init, name)) return 1;
+    if (s->inc && expr_writes_var(s->inc, name)) return 1;
+    if (s->cond && expr_writes_var(s->cond, name)) return 1;
+    if (s->then && stmt_writes_var(s->then, name)) return 1;
+    if (s->els && stmt_writes_var(s->els, name)) return 1;
+    if (s->body && stmt_writes_var(s->body, name)) return 1;
+    for (int i = 0; i < s->nitems; i++)
+        if (stmt_writes_var(s->items[i], name)) return 1;
+    return 0;
+}
+
+static int stmt_has_early_exit(Stmt *s) {
+    if (!s) return 0;
+    switch (s->kind) {
+        case STMT_BREAK: case STMT_CONTINUE: case STMT_GOTO: return 1;
+        default: break;
+    }
+    if (s->then && stmt_has_early_exit(s->then)) return 1;
+    if (s->els && stmt_has_early_exit(s->els)) return 1;
+    if (s->body && stmt_has_early_exit(s->body)) return 1;
+    for (int i = 0; i < s->nitems; i++)
+        if (stmt_has_early_exit(s->items[i])) return 1;
+    return 0;
+}
+
+/* 解析计数循环：for(i = 常量; i <op> 常量; i++/i--/i+=k/i-=k)。
+ * 成功返回 1，*ivar=循环变量名，*trip=迭代次数（>=1）。 */
+static int analyze_counting_loop(CodeGen *cg, Stmt *s,
+                                 const char **ivar, long long *trip) {
+    if (!s->init || !s->cond || !s->inc) return 0;
+    Expr *in = s->init;
+    if (in->kind != EXPR_ASSIGN || !in->l || in->l->kind != EXPR_VAR ||
+        strcmp(in->op, "=") != 0) return 0;
+    unsigned long long c0u;
+    if (!expr_const_int(cg, in->r, &c0u)) return 0;
+    long long c0 = (long long)c0u;
+    const char *vname = in->l->name;
+
+    Expr *inc = s->inc;
+    long long step = 0;
+    if (inc->kind == EXPR_INCDEC && inc->l && inc->l->kind == EXPR_VAR) {
+        if (strcmp(inc->l->name, vname) != 0) return 0;
+        if (strcmp(inc->op, "+") == 0) step = 1;
+        else if (strcmp(inc->op, "-") == 0) step = -1;
+        else return 0;
+    } else if (inc->kind == EXPR_ASSIGN && inc->l && inc->l->kind == EXPR_VAR &&
+               strcmp(inc->l->name, vname) == 0) {
+        unsigned long long k;
+        if (strcmp(inc->op, "+=") == 0) { if (!expr_const_int(cg, inc->r, &k)) return 0; step = (long long)k; }
+        else if (strcmp(inc->op, "-=") == 0) { if (!expr_const_int(cg, inc->r, &k)) return 0; step = -(long long)k; }
+        else return 0;
+    } else {
+        return 0;
+    }
+    if (step == 0) return 0;
+
+    Expr *cd = s->cond;
+    if (cd->kind != EXPR_BIN) return 0;
+    const char *op = cd->op;
+    if (strcmp(op, "<") && strcmp(op, "<=") && strcmp(op, ">") && strcmp(op, ">=") &&
+        strcmp(op, "==") && strcmp(op, "!=")) return 0;
+    long long limit;
+    int flip = 0;
+    unsigned long long limu;
+    if (cd->l && cd->l->kind == EXPR_VAR && strcmp(cd->l->name, vname) == 0) {
+        if (!expr_const_int(cg, cd->r, &limu)) return 0;
+        limit = (long long)limu;
+    } else if (cd->r && cd->r->kind == EXPR_VAR && strcmp(cd->r->name, vname) == 0) {
+        if (!expr_const_int(cg, cd->l, &limu)) return 0;
+        limit = (long long)limu;
+        flip = 1;
+    } else {
+        return 0;
+    }
+    if (flip) {
+        if (!strcmp(op, "<")) op = ">";
+        else if (!strcmp(op, "<=")) op = ">=";
+        else if (!strcmp(op, ">")) op = "<";
+        else if (!strcmp(op, ">=")) op = "<=";
+    }
+    int uns = expr_unsigned(cg, cd);
+    /* 模拟求迭代次数（限幅防不收敛/无穷循环） */
+    long long cur = c0, t = 0;
+    int guard = 1 << 24;
+    while (guard-- > 0) {
+        int cont;
+        if (!strcmp(op, "<"))  cont = uns ? ((unsigned long long)cur <  (unsigned long long)limit) : (cur <  limit);
+        else if (!strcmp(op, "<=")) cont = uns ? ((unsigned long long)cur <= (unsigned long long)limit) : (cur <= limit);
+        else if (!strcmp(op, ">"))  cont = uns ? ((unsigned long long)cur >  (unsigned long long)limit) : (cur >  limit);
+        else if (!strcmp(op, ">=")) cont = uns ? ((unsigned long long)cur >= (unsigned long long)limit) : (cur >= limit);
+        else if (!strcmp(op, "==")) cont = (cur == limit);
+        else cont = (cur != limit);
+        if (!cont) break;
+        t++;
+        cur += step;
+    }
+    if (guard <= 0) return 0;                               /* 不收敛 */
+    if (t <= 0 || (unsigned long long)t > 0xFFFFFFFFULL) return 0;
+    *ivar = vname;
+    *trip = t;
+    return 1;
+}
+
+/* 尝试把 for 计数循环改写为 CDI/JNZ 底部测试；成功返回 1，否则返回 0 走默认路径。 */
+static int try_cdi_for(CodeGen *cg, Stmt *s) {
+    const char *ivar = NULL;
+    long long trip = 0;
+    if (!analyze_counting_loop(cg, s, &ivar, &trip)) return 0;
+    if (stmt_writes_var(s->body, ivar) || stmt_has_early_exit(s->body)) return 0;
+    const char *ls = cg_new_label(cg, "CD");
+    const char *le = cg_new_label(cg, "CD");
+    const char *lc = cg_new_label(cg, "CD");
+    /* 先把 body + inc 生成到临时文件，扫描是否破坏计数器 C */
+    FILE *save = cg->out;
+    FILE *tf = tmpfile();
+    if (!tf) return 0;
+    cg->out = tf;
+    cg_push_loop(cg, le, lc);
+    gen_stmt(cg, s->body);
+    if (s->inc) gen_expr(cg, s->inc);
+    cg_pop_loop(cg);
+    cg->out = save;
+    fflush(tf);
+    rewind(tf);
+    int clean = 1;
+    char line[512];
+    while (clean && fgets(line, sizeof(line), tf)) {
+        if (asm_line_clobbers_c(line)) clean = 0;
+    }
+    if (!clean) { fclose(tf); return 0; }
+    /* 发射优化循环 */
+    if (s->init) gen_expr(cg, s->init);
+    cg_emit(cg, "LET C, DWORD %lld", trip);
+    cg_emit(cg, "%s:", ls);
+    rewind(tf);
+    while (fgets(line, sizeof(line), tf)) fputs(line, cg->out);
+    fclose(tf);
+    cg_emit(cg, "CDI");
+    cg_emit(cg, "LET E, DWORD %s", ls);
+    cg_emit(cg, "JNZ");
+    cg_emit(cg, "%s:", le);
+    return 1;
 }
 
 static void gen_stmt(CodeGen *cg, Stmt *s) {
@@ -2619,12 +3149,29 @@ static void gen_stmt(CodeGen *cg, Stmt *s) {
                     cg_emit(cg, "MOV B, A");
                     cg_emit(cg, "DST *B, DP0");
                 } else {
+                    int dsz = s->decl_size > 0 ? s->decl_size : 4;
                     if (s->decl_bool && s->decl_ptr_depth == 0 && !s->decl_is_array) emit_bool_normalize(cg);
-                    cg_emit(cg, "PUSH DWORD A");
-                    var_addr(cg, &tmp);
-                    cg_emit(cg, "MOV B, A");
-                    cg_emit(cg, "POP DWORD A");
-                    emit_store_to_b(cg, s->decl_size > 0 ? s->decl_size : 4);
+                    /* -O1 帧相对寻址：`int x = expr;` 直接 ST *F±N */
+                    int off, slot_sz;
+                    if (!s->decl_is_array && dsz >= 1 && dsz <= 8 &&
+                        frame_slot(cg, s->name, &off, &slot_sz) && frame_off_ok(off, dsz)) {
+                        if (dsz == 8) {
+                            cg_emit(cg, "ST DWORD *F%+d, A", off);
+                            cg_emit(cg, "ST DWORD *F%+d, D1", off + 4);
+                        } else if (dsz == 1) {
+                            cg_emit(cg, "ST BYTE *F%+d, A", off);
+                        } else if (dsz == 2) {
+                            cg_emit(cg, "ST WORD *F%+d, A", off);
+                        } else {
+                            cg_emit(cg, "ST DWORD *F%+d, A", off);
+                        }
+                    } else {
+                        cg_emit(cg, "PUSH DWORD A");
+                        var_addr(cg, &tmp);
+                        cg_emit(cg, "MOV B, A");
+                        cg_emit(cg, "POP DWORD A");
+                        emit_store_to_b(cg, dsz);
+                    }
                 }
             }
             break;
@@ -2767,6 +3314,8 @@ static void gen_stmt(CodeGen *cg, Stmt *s) {
             cg_emit(cg, "JMP");
             break;
         case STMT_FOR: {
+            /* -O1：常量计数循环 → CDI/JNZ 底部测试 */
+            if (try_cdi_for(cg, s)) break;
             if (s->init) gen_expr(cg, s->init);
             const char *ls = cg_new_label(cg, "FL");
             const char *le = cg_new_label(cg, "FE");
@@ -2808,13 +3357,27 @@ static void gen_stmt(CodeGen *cg, Stmt *s) {
     }
 }
 
+/* 标量参数在调用约定中的实际栈槽位大小：
+ * float=4, double/long=8, long double=10, 其它标量/指针=4 */
+static int param_slot_size(const Function *f, int i) {
+    if (f->param_sizes && f->param_sizes[i] > 0) {
+        int sz = f->param_sizes[i];
+        if (f->param_double && f->param_double[i] && f->param_ptr_depth && f->param_ptr_depth[i] == 0)
+            return (sz == 10) ? 10 : 8;
+        if (f->param_float && f->param_float[i]) return 4;
+        /* 8 字节整数（long/long long）按 8 字节槽位传递；其余标量按 4 字节 */
+        return (sz == 8) ? 8 : 4;
+    }
+    return 4;
+}
+
 static void gen_func(CodeGen *cg, Function *f) {
     cg->nlocals = 0;
     cg->nparams = 0;
     int n = f->nparams;
     int acc = 0;
     for (int i = n - 1; i >= 0; i--) {
-        int sz = (f->param_sizes && f->param_sizes[i] > 0) ? f->param_sizes[i] : 4;
+        int sz = param_slot_size(f, i);
         acc += sz;
         cg_push_param(cg, f->params[i], acc + 3, sz,
                       f->param_unsigned ? f->param_unsigned[i] : 0,
@@ -2842,7 +3405,7 @@ static void gen_func(CodeGen *cg, Function *f) {
     cg->cur_func = f;
     cg->cur_func_named_bytes = 0;
     for (int i = 0; i < f->nparams; i++)
-        cg->cur_func_named_bytes += (f->param_sizes && f->param_sizes[i] > 0) ? f->param_sizes[i] : 4;
+        cg->cur_func_named_bytes += param_slot_size(f, i);
     cg->cur_func_is_vararg = f->is_vararg;
     cg_emit(cg, "func_%s:", f->name);
     if (f->is_isr) cg_emit(cg, "PUSH DWORD F");
@@ -2961,7 +3524,87 @@ static void collect_static_locals(CodeGen *cg, Stmt **stmts, int n) {
     }
 }
 
-int generate_code(Program *p, const char *outpath, char **err) {
+/* ---- -O1 简单 peephole ----
+ * 对生成的 .asm 做行级后处理（不改变语义）：
+ *   1. LET reg, DWORD 0  →  ZERO reg（短编码）
+ *   2. MOV r, r          →  删除
+ *   3. 相邻 MOV a,b 后 MOV b,a（或 MOV a,b 后 MOV a,b）→ 删第二个 */
+static int ph_reg(const char *s) {
+    static const char *regs[] = {"A","B","C","D1","D2","R","X","I","S","T","F","E",NULL};
+    for (int i = 0; regs[i]; i++) if (strcmp(s, regs[i]) == 0) return 1;
+    return 0;
+}
+
+static void peephole_asm_file(const char *path) {
+    FILE *in = fopen(path, "r");
+    if (!in) return;
+    char **lines = NULL;
+    size_t n = 0, cap = 0;
+    char buf[1024];
+    while (fgets(buf, sizeof(buf), in)) {
+        size_t l = strlen(buf);
+        while (l > 0 && (buf[l-1] == '\n' || buf[l-1] == '\r')) buf[--l] = '\0';
+        if (n == cap) { cap = cap ? cap * 2 : 128; lines = (char **)realloc(lines, cap * sizeof(char *)); }
+        lines[n++] = xstrdup(buf);
+    }
+    fclose(in);
+
+    /* 规则 1：LET reg, DWORD 0 → ZERO reg（值必须恰好为 0） */
+    for (size_t i = 0; i < n; i++) {
+        const char *s = lines[i];
+        while (*s == ' ' || *s == '\t') s++;
+        char r[32], v[64];
+        if (sscanf(s, "LET %31[A-Za-z0-9], DWORD %63[0-9A-Za-z_]", r, v) == 2 &&
+            ph_reg(r) && strcmp(v, "0") == 0) {
+            char *nl = (char *)malloc(strlen(r) + 16);
+            sprintf(nl, "\tZERO %s", r);
+            free(lines[i]);
+            lines[i] = nl;
+        }
+    }
+    /* 规则 2：MOV r, r → 删除 */
+    for (size_t i = 0; i < n; i++) {
+        const char *s = lines[i];
+        while (*s == ' ' || *s == '\t') s++;
+        char a[32], b[32];
+        if (sscanf(s, "MOV %31[A-Za-z0-9], %31[A-Za-z0-9]", a, b) == 2 &&
+            strcmp(a, b) == 0) {
+            free(lines[i]); lines[i] = xstrdup("");
+        }
+    }
+    /* 规则 3：相邻 MOV a,b 后 MOV b,a（或完全相同）→ 删第二个 */
+    for (size_t i = 0; i + 1 < n; i++) {
+        const char *s1 = lines[i];
+        while (*s1 == ' ' || *s1 == '\t') s1++;
+        const char *s2 = lines[i+1];
+        while (*s2 == ' ' || *s2 == '\t') s2++;
+        if (*s1 == '\0' || *s2 == '\0') continue;
+        char a[32], b[32], c[32], d[32];
+        if (sscanf(s1, "MOV %31[A-Za-z0-9], %31[A-Za-z0-9]", a, b) == 2 &&
+            sscanf(s2, "MOV %31[A-Za-z0-9], %31[A-Za-z0-9]", c, d) == 2 &&
+            ph_reg(a) && ph_reg(b) && ph_reg(c) && ph_reg(d) &&
+            strcmp(a, c) == 0 && strcmp(b, d) == 0) {
+            free(lines[i+1]); lines[i+1] = xstrdup("");
+        } else if (sscanf(s1, "MOV %31[A-Za-z0-9], %31[A-Za-z0-9]", a, b) == 2 &&
+                   sscanf(s2, "MOV %31[A-Za-z0-9], %31[A-Za-z0-9]", c, d) == 2 &&
+                   ph_reg(a) && ph_reg(b) && ph_reg(c) && ph_reg(d) &&
+                   strcmp(a, d) == 0 && strcmp(b, c) == 0 && strcmp(a, b) != 0) {
+            free(lines[i+1]); lines[i+1] = xstrdup("");
+        }
+    }
+    /* 写回（跳过被删除的空行） */
+    FILE *out = fopen(path, "w");
+    if (out) {
+        for (size_t i = 0; i < n; i++) {
+            if (lines[i][0] != '\0') fprintf(out, "%s\n", lines[i]);
+            free(lines[i]);
+        }
+        fclose(out);
+    }
+    free(lines);
+}
+
+int generate_code(Program *p, const char *outpath, int emit_extern, char **err) {
     FILE *out = fopen(outpath, "w");
     if (!out) {
         if (err) *err = xstrdup("无法打开输出文件");
@@ -3076,6 +3719,27 @@ int generate_code(Program *p, const char *outpath, char **err) {
         cg.data_off += max_ret_struct;
     }
     fprintf(out, "\n\tSECTION TEXT\n\tORG 0\n");
+    if (emit_extern) {
+        /* ELF 模式下，把“仅声明、本单元未定义”的函数声明为外部符号，
+           供 dlinker 在链接期解析（避免本单元自动合并实现导致的重复定义）。 */
+        for (int i = 0; i < p->nfuncs; i++) {
+            if (p->funcs[i].is_decl)
+                fprintf(out, "\tEXTERN func_%s\n", p->funcs[i].name);
+        }
+    }
+    /* __interrupt__ 只需写在原型（声明）上：若同名函数已有带 __interrupt__ 的声明，
+       则其实现（定义）即使省略 __interrupt__ 也按 ISR 生成（属性从原型继承到实现）。 */
+    for (int i = 0; i < p->nfuncs; i++) {
+        if (p->funcs[i].is_decl) continue;
+        for (int j = 0; j < p->nfuncs; j++) {
+            if (p->funcs[j].is_decl && p->funcs[j].is_isr &&
+                p->funcs[j].name && p->funcs[i].name &&
+                strcmp(p->funcs[j].name, p->funcs[i].name) == 0) {
+                p->funcs[i].is_isr = 1;
+                break;
+            }
+        }
+    }
     for (int i = 0; i < p->nfuncs; i++) {
         if (!p->funcs[i].is_decl) gen_func(&cg, &p->funcs[i]);
     }
@@ -3085,6 +3749,7 @@ int generate_code(Program *p, const char *outpath, char **err) {
     }
     free(cg.strings);
     fclose(out);
+    peephole_asm_file(outpath);   /* -O1 简单 peephole 后处理 */
     if (err) *err = NULL;
     return 1;
 }

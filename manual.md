@@ -2,8 +2,6 @@
 
 *DOCTOR Owns a Complete insTructions set, Operates dual addResses.*
 
-**ARCHITECTURE v3.3**
-
 ## 概览
 
 **DOCTOR** 是一套为清晰表达意图而设计的低级指令集架构。它采用 **哈佛架构**（代码与数据空间分离），**Little‑Endian** 字节序，指令为 **变长编码**（至少 2 字节，长度由第一个字节的低 4 位指定）。  
@@ -13,17 +11,21 @@
 ## 寄存器
 
 ### 代码指针
+
 - **P** Program (隐式自增, 不可写)
 - **E** codE (可写跳转目标)
+
 ### 数据指针
+
 - **S** Stack
 - **T** Task Base
-- **A** Accumulator 
-- **B** Backup 
+- **A** Accumulator
+- **B** Backup
 - **F** Frame
 - **R** addRess Pointer
 
 ### 数据寄存器
+
 - **A** Accumulator
 - **B** Backup
 - **C** Counter
@@ -34,6 +36,7 @@
 - **I** consIstent Pointer (可以用于方便存放基址、常量等内容)
 
 ### 系统寄存器
+
 - **RIN1** Register for INterrupts 1 (32位，中断使能寄存器，bit i表示中断base+i被允许响应)
 - **RIN2** Register for INterrupts 2 (32位，中断挂起寄存器，bit i表示中断base+i有请求正在等待)
 - **RIN3** Register for INterrupts 3 (32+32位，高32位是中断控制表(ICT)的代码基址ICTB，低32位是系统控制寄存器CTRL)
@@ -46,10 +49,11 @@
 其中，系统寄存器仅在内核态中可以读写。
 
 下面是`RIN3`寄存器的定义：（从左到右是从高到低）
+
 | 位 | bit 63 - bit 32 | bit 31 | bit 30 | bit 29 | bit 28 | bit 27-24 | bit 23-16 | bit 15-0 |
-|---|---|---|---|---|---|---|---|---|
-| 名称 | ICTB | GIE | INL | MPU | CPL | Rsvd | ISRB | Rsvd
-| 功能 | ICT基址 | 全局中断使能(1开0关), 由PUSHI和POPI管理 | 中断嵌套锁，只读，中断响应时为1，IRET清零 | MPU开关，1开0关 | 特权级，0为内核，1为用户 | 保留 | 由RIN1与RIN2管理的32个外部中断的起始中断号（也就是IRQ 0所对应的中断号） | 保留
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 名称 | ICTB | GIE | INL | MPU | CPL | Rsvd | ISRB | Rsvd |
+| 功能 | ICT基址 | 全局中断使能(1开0关), 由PUSHI和POPI管理 | 中断嵌套锁，只读，中断响应时为1，IRET清零 | MPU开关，1开0关 | 特权级，0为内核，1为用户 | 保留 | 由RIN1与RIN2管理的32个外部中断的起始中断号（也就是IRQ 0所对应的中断号） | 保留 |
 
 硬件复位值：`RIN3`=`0x0000_0000` + `0x0000_0000`（中断关闭，内核态，护栏关闭）
 
@@ -67,35 +71,36 @@
 
 代码示例：
 
-```
+```asm
 GETB D1, RIN3_CTRL
-LET DWORD X, 0x7FFF_FFFF		; 关闭GIE
+LET DWORD X, 0x7FFF_FFFF  ; 关闭GIE
 AND DWORD D1, X
-SETB RIN3_CTRL, D1				; 此时中断被禁止
+SETB RIN3_CTRL, D1    ; 此时中断被禁止
 
 GETB D1, RIN3_CTRL
-LET DWORD X, 0x8000_0000		; 开启GIE
+LET DWORD X, 0x8000_0000  ; 开启GIE
 OR DWORD D1, X
-SETB RIN3_CTRL, D1				; 此时中断被允许
+SETB RIN3_CTRL, D1    ; 此时中断被允许
 
-PUSHI							; 注意：此时中断被禁止
+PUSHI       ; 注意：此时中断被禁止
 GETB D1, RIN3_CTRL
-LET DWORD X, 0x8000_0000		; 开启GIE
+LET DWORD X, 0x8000_0000  ; 开启GIE
 OR DWORD D1, X
-SETB RIN3_CTRL, D1				; 此时中断仍被禁止
-POPI							; 系统恢复到GIE设定的状态——开启中断
+SETB RIN3_CTRL, D1    ; 此时中断仍被禁止
+POPI       ; 系统恢复到GIE设定的状态——开启中断
 
-PUSHI							; 注意：此时中断被禁止
+PUSHI       ; 注意：此时中断被禁止
 GETB D1, RIN3_CTRL
-LET DWORD X, 0x7FFF_FFFF		; 关闭GIE
+LET DWORD X, 0x7FFF_FFFF  ; 关闭GIE
 AND DWORD D1, X
-SETB RIN3_CTRL, D1				; 此时中断仍被禁止
-POPI							; 系统恢复到GIE设定的状态——禁止中断
+SETB RIN3_CTRL, D1    ; 此时中断仍被禁止
+POPI       ; 系统恢复到GIE设定的状态——禁止中断
 ```
 
 下面是发生异常时自动触发的中断。在触发后，只会跳转到ICT表项的高4字节（ISR_BASE）。强制ISR_SS=1, ISR_NMO=0, ISR_INL=0. 异常中断和不可屏蔽中断不受GIE或INL的控制，自动触发：
+
 | 中断号 | 异常类型 | 名称/缩写 | 写入`XAR`值的含义 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `0x00` | 除数为0 | #DIV | 触发该异常时的P值（模拟器中为触发指令的起始地址） |
 | `0x01` | 非法指令 | #II | 同上 |
 | `0x02` | 栈异常，显式修改S或F越界，或是栈溢出 | #STACK | 最高位：0=上溢，1=下溢；低31位：导致溢出的S新值 |
@@ -105,8 +110,9 @@ POPI							; 系统恢复到GIE设定的状态——禁止中断
 `0x00`-`0x0F`与`0xF0`-`0xFF`的中断是保留的，除了特定用途（例如处理异常、陷入内核等），不要随意添加硬中断。
 
 ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定义如下：
+
 | 偏移（从低到高） | 内容 | 缩写 |
-|---|---|---|
+| --- | --- | --- |
 | Byte 0~3 | 该表项的中断处理程序(ISR)基址 | ISR_BASE |
 | Byte 4 bit 7 | 该表项（作为软中断时）的特权级。如果越权调用ISR，触发#GP | ISR_DPL |
 | Byte 4 bit 6 | 该中断是否允许中断嵌套。0=不允许，1=允许 | ISR_INL |
@@ -122,7 +128,7 @@ ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定�
 ### Byte 0 — 控制字节
 
 | 位 | 含义 |
-|---|---|
+| --- | --- |
 | bit 7 | `REP` 前缀标志 (1=带 REP) |
 | bit 6–5 | 操作数尺寸：`00`=不指定，`01`=BYTE，`10`=WORD，`11`=DWORD |
 | bit 4 | `NZ` 后缀标志 (1=带 NZ，高位保留 0=不带NZ，高位保留，或不适用NZ) |
@@ -136,21 +142,21 @@ ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定�
 ### Byte 1 — 操作码
 
 | 位 | 含义 |
-|---|---|
+| --- | --- |
 | bit 7 | 一般情况下保留 |
 | bit 6–0 | 操作码 |
 
 ### Byte 2 — 操作数表
 
 | 位 | 含义 |
-|---|---|
+| --- | --- |
 | bit 7–4 | 操作数1 (见下方操作数编码表) |
 | bit 3–0 | 操作数2 (见下方操作数编码表) |
 
 ### 操作数编码表 (Byte 2 中的半字节)
 
 | 编码 | 操作数 | 编码 | 操作数 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 0x0 | `A` | 0x8 | `E` |
 | 0x1 | `B` | 0x9 | `R` |
 | 0x2 | `C` | 0xA | `X` |
@@ -170,8 +176,8 @@ ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定�
 ## 指令集参考
 
 基础指令操作码从 **0x00** 到 **0x44** 连续排列，共 **69** 条；
-加上 DFE（0x45–0x54）、DDE（0x55–0x66）与 DXE（0x67–0x7A），
-当前 ISA 共 **123** 条指令。
+加上 DFE（0x45–0x54）、DDE（0x55–0x66）、DXE（0x67–0x7A）
+与 3.4 新增的 TRA（0x7B），当前 ISA 共 **124** 条指令。
 
 操作数约定：  
 
@@ -190,7 +196,7 @@ ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定�
 ### 数据传送 (0x00–0x05)
 
 | # | 指令 | 格式 | 语义 | 操作码 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 0 | `LET` *需要尺寸* | `LET [DPR/DR/E], [BYTE/WORD/DWORD] N` | `reg = N` | `0x00` |
 | 1 | `MOV` | `MOV [DPR1/DR1/E1], [DPR2/DR2/E2]` | `reg1 = reg2` | `0x01` |
 | 2 | `XCHG` | `XCHG [DPR1/DR1/E1], [DPR2/DR2/E2]` | 交换两寄存器值 | `0x02` |
@@ -201,7 +207,7 @@ ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定�
 ### 四则运算 (0x06–0x0C)
 
 | # | 指令 | 格式 | 语义 | 操作码 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 6 | `ADD` *需要尺寸* | `ADD [BYTE/WORD/DWORD] [DPR1/DR1], [DPR2/DR2/N]` | `[DPR1/DR1] = [DPR1/DR1] + [DPR2/DR2/N]` | `0x06` |
 | 7 | `SUB` *需要尺寸* | `SUB [BYTE/WORD/DWORD] [DPR1/DR1], [DPR2/DR2/N]` | `[DPR1/DR1] = [DPR1/DR1] - [DPR2/DR2/N]` | `0x07` |
 | 8 | `MUL` *需要尺寸* | `MUL [BYTE/WORD/DWORD] [DPR1/DR1], [DPR2/DR2]` | BYTE → D2[15:0] ; WORD → D2 ; DWORD → D1:D2 | `0x08` |
@@ -213,7 +219,7 @@ ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定�
 ### 位运算 (0x0D–0x15)
 
 | # | 指令 | 格式 | 语义 | 操作码 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 13 | `SHL` *需要尺寸* | `SHL [BYTE/WORD/DWORD] [DPR/DR], N` | 逻辑左移 N 位 | `0x0D` |
 | 14 | `SHR` *需要尺寸* | `SHR [BYTE/WORD/DWORD] [DPR/DR], N` | 逻辑右移 N 位 | `0x0E` |
 | 15 | `MSL` *需要尺寸* | `MSL [BYTE/WORD/DWORD] [DPR/DR], N` | 算术左移 N 位 | `0x0F` |
@@ -227,16 +233,16 @@ ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定�
 ### 通用的栈操作 (0x16–0x19)
 
 | # | 指令 | 格式 | 语义 | 操作码 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 22 | `PUSH` *需要尺寸* | `PUSH [BYTE/WORD/DWORD] [DPR/DR/E/N]` | `S++; *S = value` | `0x16` |
 | 23 | `POP` *需要尺寸* | `POP [BYTE/WORD/DWORD] [DPR/DR/E]` | `dst = *S; S--` | `0x17` |
 | 24 | `SFA` | `SFA [BYTE/DWORD/WORD] N` | (Set Frame for Allocation) F=S; S+=N; 函数入口处，建立栈帧，为局部变量分配空间。N为局部变量所占用的字节数 | `0x18` |
 | 25 | `RER` | `RER` | (Reset codE for Returning) S=F; POP E; 函数返回前，释放局部变量空间，为接下来的跳转做准备 | `0x19` |
 
-### 利用R的地址计算 (0x1A–0x20) 
+### 利用R的地址计算 (0x1A–0x20)
 
 | # | 指令 | 格式 | 语义 | 操作码 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 26 | `PUSHR` | `PUSHR` | `PUSH DWORD R` | `0x1A` |
 | 27 | `POPR` | `POPR` | `POP DWORD R` | `0x1B` |
 | 28 | `SRA` | `SRA` | `R = A` | `0x1C` |
@@ -251,7 +257,7 @@ ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定�
 `C` 用作比较寄存器。条件跳转比较 `C` 与操作数 (低 N 位)。
 
 | # | 指令 | 格式 | 条件 | 操作码 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 33 | `TEST` *需要尺寸* | `TEST [BYTE/WORD/DWORD] [DPR/DR]` | 将C的低BYTE/WORD/DWORD与DPR/DR的低～按位与，保存在C中 | `0x21` |
 | 34 | `CMP` *需要尺寸* | `CMP [BYTE/WORD/DWORD] [DPR/DR]` | 将C的低～与DPR/DR的低～相减，保存在C中 | `0x22` |
 | 35 | `JMP` | `JMP` | 无条件 | `0x23` |
@@ -271,7 +277,8 @@ ICT的结构：ICT一共有256项，编号0~255。每一条都有8字节，定�
 ### I/O与中断处理 (0x30–0x39)
 
 **推荐的RINx寄存器出入栈顺序：**
-```
+
+```asm
 PUSHI
 PUSH RIN1
 PUSH RIN2
@@ -284,9 +291,9 @@ POPI
 在对RIN系列寄存器操作时，中断自动被屏蔽。
 
 | # | 指令 | 格式 | 语义 | 操作码 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 48 | `IN` *需要尺寸* | `IN [BYTE/WORD/DWORD] [DPR1/DR1], [DPR2/DR2]` | 从端口 `DPR2/DR2` 读入到 `DPR1/DR1` | `0x30` |
-| 49 | `OUT` *需要尺寸* | `OUT [BYTE/WORD/DWORD] [DPR1/DR1], [DPR2/DR2] ` | 将 `DPR2/DR2` 的低N位写入端口 `DPR1/DR1` | `0x31` |
+| 49 | `OUT` *需要尺寸* | `OUT [BYTE/WORD/DWORD] [DPR1/DR1], [DPR2/DR2]` | 将 `DPR2/DR2` 的低N位写入端口 `DPR1/DR1` | `0x31` |
 | 50 | `INT` | `INT [N/DR]` | 触发软件中断 N（这里N必须是一个BYTE），自动压栈RIN3和P，查表跳转 | `0x32` |
 | 51 | `PUSH RIN1` | `PUSH RIN1` | 压入 RIN1 (DWORD) | `0x33` |
 | 52 | `PUSH RIN2` | `PUSH RIN2` | 压入 RIN2 (DWORD) | `0x34` |
@@ -296,10 +303,10 @@ POPI
 | 56 | `POPI` | `POPI` | (POP RIN3 and enable Interrupts) 先弹RIN3低32位，再弹RIN3高32位，并开启中断 | `0x38` |
 | 57 | `HLT` | `HLT` | 停机等待中断 | `0x39` |
 
-### 批量操作及其他操作 (0x3A–0x3E)
+### 批量操作及其他操作 (0x3A–0x3F)
 
 | # | 指令 | 格式 | 语义 | 操作码 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 58 | `BLKS` *需要尺寸* | `BLKS [BYTE/WORD/DWORD] [DR/N]` | 批量赋值：将R所指向的值往后C个内存BYTE/WORD/DWORD的值全部赋值为DR/N | `0x3A` |
 | 59 | `PUSH P` *需要尺寸* | `PUSH [BYTE/WORD/DWORD] P` | 将P寄存器的低BYTE/WORD/DWORD压栈 | `0x3B` |
 | 60 | `NOP` | `NOP` | 空指令 | `0x3C` |
@@ -310,8 +317,9 @@ POPI
 ### 内存保护指令 (0x40-0x43)
 
 **此处的SYSREG操作数也位于Byte 2半字节。它们的定义如下：**
+
 | 编码 | 系统寄存器 | 说明 |
-|---|---|---|
+| --- | --- | --- |
 | 0x0 | CBASE | 代码基址 |
 | 0x1 | CLIMIT | 代码上限 |
 | 0x2 | DBASE | 数据基址 |
@@ -324,10 +332,11 @@ POPI
 | 0x9-0xF | 保留 | / |
 
 **对于下述指令，MPU会检查内存读写是否越界（MPU=1 时生效，越界触发 #GP；栈操作越界触发 #STACK）：**
+
 | 指令 | 操作码 | 何时检查 | 检查对象 |
-|---|---|---|---|
-| `LR` | `0x03` | 读取*A, *B, *T, *F, *S, *R，*I时 | 指针地址+尺寸(BYTE/WORD/DWORD) 必须落在范围[DBASE, DLIMIT) |
-| `ST` | `0x04` | 写入*A, *B, *T, *F, *S, *R, *I时 | 同上 |
+| --- | --- | --- | --- |
+| `LR` | `0x03` | 读取*A,*B, *T,*F, *S,*R，*I时 | 指针地址+尺寸(BYTE/WORD/DWORD) 必须落在范围[DBASE, DLIMIT) |
+| `ST` | `0x04` | 写入*A,*B, *T,*F, *S,*R, *I时 | 同上 |
 | `LOD` | `0x1E` | 读取*R时 | 检查R地址+尺寸，和R+尺寸，是否越界 |
 | `STO` | `0x1F` | 写入*R时 | 同上 |
 | `PUSH` | `0x16` | 压栈时 | 检查S+尺寸是否<DLIMIT（越界→#STACK） |
@@ -337,8 +346,9 @@ POPI
 | `POR` | `0x44` | 写入*DPR/*E时 | *DPR→检查[DBASE, DLIMIT)；*E→检查[CBASE, CLIMIT) |
 
 **对于下述指令，MPU会检查内存指针是否越界（写E越界→#GP；写S/F越界→#STACK）：**
+
 | 指令 | 操作码 | 何时检查 | 检查对象 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `LET` | `0x00` | 向E, S, F写入立即数时 | 若目标为E，检查[CBASE, CLIMIT)；若目标为S/F，检查[DBASE, DLIMIT) |
 | `MOV` | `0x01` | 向E, S, F搬运数据时 | 同上 |
 | `POP` | `0x17` | 弹栈到E, S, F时 | 检查新值是否在区间内 |
@@ -347,7 +357,7 @@ POPI
 | `JMP`等跳转指令 | `0x23`-`0x2F` | 隐式写入P之前 | 检查E的值是否在[CBASE, CLIMIT) |
 
 | # | 指令 | 格式 | 语义 | 操作码 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 64 | `SVC` | `SVC` | 陷入内核。硬件将RIN3的CPL置为0，GIE置为0，且护栏因进入内核态而暂时失效。调用中断`0xFE`。（实现注：中断帧压入的是**原始**RIN3，因此IRET恢复到用户态原状——CPL=1、GIE恢复；进入ISR后的工作状态才是CPL=0/GIE=0） | `0x40` |
 | 65 | `IRET` | `IRET` | 返回用户态。硬件弹栈，恢复`RIN3`的完整值。自动按照恢复后的值工作。 | `0x41` |
 | 66 | `SETB` | `SETB [SYSREG], [DR]` | 写系统寄存器。将[DR]的值写入系统寄存器[SYSREG]，只有内核态允许执行。 | `0x42` |
@@ -356,7 +366,7 @@ POPI
 ### DOCTOR 3.3新增的指令 (0x44)
 
 | # | 指令 | 格式 | 语义 | 操作码 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 68 | `POR` *需要尺寸* | `POR [BYTE/WORD/DWORD] [*DPR/*E]` | (POP to RAM) 将栈顶数据弹出到*DPR或*E所指定的内存空间中 | `0x44` |
 
 ## DOCTOR 浮点扩展（DFE）
@@ -369,7 +379,7 @@ DOCTOR 浮点扩展（DOCTOR Float Extension，DFE）提供 32 位单精度浮�
 DFE 新增以下寄存器：
 
 | 寄存器 | 宽度 | 说明 |
-|---|---|---|
+| --- | --- | --- |
 | `FP0` – `FP7` | 32 位 | 8 个单精度浮点数据寄存器 |
 | `FPCR` | 32 位 | 浮点控制/状态寄存器 |
 
@@ -377,7 +387,7 @@ DFE 新增以下寄存器：
 `FPCR` 各位定义如下：
 
 | 位 | 名称 | 含义 |
-|---|---|---|
+| --- | --- | --- |
 | 0 | `NX` | 结果不精确（Inexact） |
 | 1 | `UF` | 下溢（Underflow） |
 | 2 | `OF` | 上溢（Overflow） |
@@ -396,7 +406,7 @@ DFE 新增以下寄存器：
 除 `FLD`/`FST` 外，DFE 指令**不区分 BYTE/WORD/DWORD**；浮点寄存器与浮点内存访问固定为 32 位。
 
 | 指令 | 格式 | 语义 |
-|---|---|---|
+| --- | --- | --- |
 | `FMOV` | `FMOV FPn, FPm` | `FPn = FPm` |
 | `FLDI` | `FLDI FPn, imm32` | 将 32 位立即数作为浮点位模式载入 `FPn` |
 | `FLD` | `FLD FPn, *DPR/*E` | 从内存读取 32 位浮点值到 `FPn` |
@@ -407,7 +417,7 @@ DFE 新增以下寄存器：
 | `FDIV` | `FDIV FPn, FPm` | `FPn = FPn / FPm` |
 | `FSQRT` | `FSQRT FPn` | `FPn = sqrt(FPn)` |
 | `FNEG` | `FNEG FPn` | `FPn = -FPn` |
-| `FABS` | `FABS FPn` | `FPn = |FPn|` |
+| `FABS` | `FABS FPn` | `FPn = abs(FPn)` |
 | `FCMP` | `FCMP FPn, FPm` | 比较 `FPn` 与 `FPm`，结果写入 `C`：`FPn < FPm` → `C = -1`，`FPn == FPm` → `C = 0`，`FPn > FPm` → `C = 1`；若为无序（NaN）则置 `FPCR.INV` |
 | `F2I` | `F2I DR, FPn` | 将 `FPn` 按当前舍入模式转换为 32 位整数，写入 `DR` |
 | `I2F` | `I2F FPn, DR` | 将 `DR` 中的 32 位整数转换为浮点数，写入 `FPn` |
@@ -419,7 +429,7 @@ DFE 新增以下寄存器：
 DFE 指令使用当前基础 ISA 中保留的扩展操作码空间。本文暂定操作码分配如下：
 
 | 操作码 | 指令 |
-|---|---|
+| --- | --- |
 | `0x45` | `FMOV` |
 | `0x46` | `FLDI` |
 | `0x47` | `FLD` |
@@ -457,7 +467,7 @@ DOCTOR 双精度浮点扩展（DOCTOR Double-precision Extension，DDE）提供 
 ### DDE 寄存器
 
 | 寄存器 | 宽度 | 说明 |
-|---|---|---|
+| --- | --- | --- |
 | `DP0` – `DP7` | 64 位 | 8 个双精度浮点数据寄存器 |
 | `FPCR` | 32 位 | 继续使用 DFE 的浮点控制/状态寄存器；DDE 的 `DZ`/`INV` 也记录在 `FPCR` 中 |
 
@@ -466,7 +476,7 @@ DOCTOR 双精度浮点扩展（DOCTOR Double-precision Extension，DDE）提供 
 除 `DLD`/`DST` 外，DDE 指令不区分 `BYTE/WORD/DWORD`；双精度内存访问固定为 8 字节。
 
 | 指令 | 格式 | 语义 |
-|---|---|---|
+| --- | --- | --- |
 | `DMOV` | `DMOV DPn, DPm` | `DPn = DPm` |
 | `DLDI` | `DLDI DPn, imm64` | 将 64 位立即数作为双精度位模式载入 `DPn` |
 | `DLD` | `DLD DPn, *DPR/*E` | 从内存读取 8 字节双精度值到 `DPn` |
@@ -477,7 +487,7 @@ DOCTOR 双精度浮点扩展（DOCTOR Double-precision Extension，DDE）提供 
 | `DDIV` | `DDIV DPn, DPm` | `DPn = DPn / DPm` |
 | `DSQRT` | `DSQRT DPn` | `DPn = sqrt(DPn)` |
 | `DNEG` | `DNEG DPn` | `DPn = -DPn` |
-| `DABS` | `DABS DPn` | `DPn = |DPn|` |
+| `DABS` | `DABS DPn` | `DPn = abs(DPn)` |
 | `DCMP` | `DCMP DPn, DPm` | 比较 `DPn` 与 `DPm`，结果写入 `C`：小于 → `-1`，等于 → `0`，大于 → `1`；NaN 置 `FPCR.INV` |
 | `D2I` | `D2I DR, DPn` | 将 `DPn` 转换为 32 位整数写入 `DR` |
 | `I2D` | `I2D DPn, DR` | 将 `DR` 中的 32 位整数转换为双精度写入 `DPn` |
@@ -489,7 +499,7 @@ DOCTOR 双精度浮点扩展（DOCTOR Double-precision Extension，DDE）提供 
 ### DDE 指令编码
 
 | 操作码 | 指令 |
-|---|---|
+| --- | --- |
 | `0x55` | `DMOV` |
 | `0x56` | `DLDI` |
 | `0x57` | `DLD` |
@@ -522,12 +532,12 @@ DOCTOR 双精度浮点扩展（DOCTOR Double-precision Extension，DDE）提供 
 
 DOCTOR 80位扩展精度浮点扩展（DOCTOR eXtended-precision Float Extension，DXE）
 提供 80 位扩展精度浮点运算能力。本文档定义该扩展的指令集与编码；当前已在
-模拟器中实现，dasm/dcc 支持可作为后续工作。
+模拟器、dasm、dcc 中实现。
 
 ### DXE 寄存器
 
 | 寄存器 | 宽度 | 说明 |
-|---|---|---|
+| --- | --- | --- |
 | `EP0` – `EP7` | 80 位（10 字节） | 8 个扩展精度浮点数据寄存器 |
 | `FPCR` | 32 位 | 继续使用 DFE/DDE 的浮点控制/状态寄存器；DXE 的 `NX`/`UF`/`OF`/`DZ`/`INV` 也记录在 `FPCR` 中 |
 
@@ -545,7 +555,7 @@ DOCTOR 80位扩展精度浮点扩展（DOCTOR eXtended-precision Float Extension
 10 字节。
 
 | 指令 | 格式 | 语义 |
-|---|---|---|
+| --- | --- | --- |
 | `EMOV` | `EMOV EPn, EPm` | `EPn = EPm` |
 | `ELDI` | `ELDI EPn, imm80` | 将 80 位立即数作为扩展精度位模式载入 `EPn` |
 | `ELD` | `ELD EPn, *DPR/*E` | 从内存读取 10 字节扩展精度值到 `EPn` |
@@ -556,7 +566,7 @@ DOCTOR 80位扩展精度浮点扩展（DOCTOR eXtended-precision Float Extension
 | `EDIV` | `EDIV EPn, EPm` | `EPn = EPn / EPm` |
 | `ESQRT` | `ESQRT EPn` | `EPn = sqrt(EPn)` |
 | `ENEG` | `ENEG EPn` | `EPn = -EPn` |
-| `EABS` | `EABS EPn` | `EPn = |EPn|` |
+| `EABS` | `EABS EPn` | `EPn = abs(EPn)` |
 | `ECMP` | `ECMP EPn, EPm` | 比较 `EPn` 与 `EPm`，结果写入 `C`：小于 → `-1`，等于 → `0`，大于 → `1`；NaN 置 `FPCR.INV` |
 | `E2I` | `E2I DR, EPn` | 将 `EPn` 按当前舍入模式转换为 32 位整数，写入 `DR` |
 | `I2E` | `I2E EPn, DR` | 将 `DR` 中的 32 位整数转换为扩展精度，写入 `EPn` |
@@ -570,7 +580,7 @@ DOCTOR 80位扩展精度浮点扩展（DOCTOR eXtended-precision Float Extension
 ### DXE 指令编码
 
 | 操作码 | 指令 |
-|---|---|
+| --- | --- |
 | `0x67` | `EMOV` |
 | `0x68` | `ELDI` |
 | `0x69` | `ELD` |
@@ -607,11 +617,17 @@ DOCTOR 80位扩展精度浮点扩展（DOCTOR eXtended-precision Float Extension
 - DXE 指令暂不支持 `REP` 前缀。
 - 若某实现未提供 DXE，执行 DXE 指令应视为非法指令（`#II`）。
 
+## DOCTOR 3.4 新增的指令
+
+| 指令 | 格式 | 条件 | 操作码 |
+| --- | --- | --- | --- |
+| `TRA` *需要尺寸* | `TRA [BYTE/WORD/DWORD] *[DPR1/E], *[DPR2/E]` | (TRAnsfer)  按BYTE/WORD/DWORD计，将DPR2/E所指向的数据/代码内存的内存单元复制到DPR1/E所指向的数据/代码内存单元。等价于C伪代码`(uint8_t/uint16_t/uint32_t) *DPR1/*E=(uint8_t/uint16_t/uint32_t) *DPR2/*E;` | `0x7B` |
+
 ## 机器码编码示例
 
 ### 示例 1：LET A, DWORD 0x12345678
 
-```
+```asm
 Byte 0: 0x65  (01100101B, 无REP，无NZ，数据需要5Byte)
 Byte 1: 0x00  (LET)
 Byte 2: 0x0F  (A, 立即数)
@@ -623,7 +639,7 @@ Byte 6: 0x12
 
 ### 示例 2：ADD DWORD A, B
 
-```
+```asm
 Byte 0: 0x61  (尺寸=DWORD=11, 长度=3字节 → 长度字段=0001)
 Byte 1: 0x07  (操作码 ADD)
 Byte 2: 0x01  (操作数1=A, 操作数2=B)
@@ -631,7 +647,7 @@ Byte 2: 0x01  (操作数1=A, 操作数2=B)
 
 ### 示例 3：SUBNZ D1, BYTE 0x10
 
-```
+```asm
 Byte 0: 0x32 (00110010B，无REP,有NZ,BYTE,还需要读取2Byte)
 Byte 1: 0x07 (SUB)
 Byte 2: 0x3F (D1, 立即数)
@@ -640,7 +656,7 @@ Byte 3: 0x10 (立即数)
 
 ### 示例 4：GETB D1, KSP
 
-```
+```asm
 Byte 0: 0x01 (0000_0001B，无REP,不适用尺寸，无NZ,还需要读取1Byte)
 Byte 1: 0x43 (GETB)
 Byte 2: 0x34 (D1, KSP，其中KSP是SYSREG，编号特殊定义)
@@ -648,15 +664,15 @@ Byte 2: 0x34 (D1, KSP，其中KSP是SYSREG，编号特殊定义)
 
 ### 示例 5：CSI
 
-```
+```asm
 Byte 0: 0x00 (0000_0000B，无REP，不适用尺寸，无NZ，还需要读取0Byte)
 Byte 1: 0x0B (CSI)
 ```
 
 ### 示例 6：SR BYTE T+X*8+0x02
 
-```
-Byte 0: 0x06 (0010_0011B，无REP，BYTE，无NZ，还需要读取3Byte)
+```asm
+Byte 0: 0x13 (0001_0011B，无REP，BYTE，无NZ，还需要读取3Byte)
 Byte 1: 0x20 (SR)
 Byte 2: 0x6A (T, X)
 Byte 3: 0x03 (k=8=2^3,这里指定的是2的幂次，此处为3)

@@ -64,6 +64,7 @@ static const std::unordered_map<std::string, token_type> instr_map = {
     {"f2e", TOK_INSTR_F2E}, {"e2f", TOK_INSTR_E2F},
     {"d2e", TOK_INSTR_D2E}, {"e2d", TOK_INSTR_E2D},
     {"epush", TOK_INSTR_EPUSH}, {"epop", TOK_INSTR_EPOP},
+    {"tra", TOK_INSTR_TRA},
 };
 
 static const std::unordered_map<std::string, token_type> multi_instr_map = {
@@ -314,7 +315,7 @@ bool lexer_next_token(lexer_context& ctx, token& out_tok) {
     }
 
     // ---- 4. 标识符 ----
-    if (std::isalpha(static_cast<unsigned char>(ch)) || ch == '_') {
+    if (std::isalpha(static_cast<unsigned char>(ch)) || ch == '_' || ch=='.') {
         while (ctx.current_pos < line.size()) {
             char c = line[ctx.current_pos];
             if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.') {

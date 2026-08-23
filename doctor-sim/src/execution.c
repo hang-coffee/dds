@@ -1753,8 +1753,9 @@ int execute(DOCTOR_CPU *cpu, Decoded_instr *instr) {
 					err=1;
 					return err;
 			}
-			break;case FMOV:
-if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
+			break;
+			case FMOV:
+				if(instr->op1>7 || instr->op2>7) { exe_err(cpu); err=1; return err; }
 cpu->fp_regs[instr->op1]=cpu->fp_regs[instr->op2];
 break;
 case FLDI:
@@ -2124,6 +2125,65 @@ for(int i=0; i<4; i++) b[i+4]=(uint8_t)((mid>>(8*i))&0xff);
 b[8]=(uint8_t)(hi&0xff);
 b[9]=(uint8_t)((hi>>8)&0xff);
 cpu->ext_regs[instr->op1]=ext_from_bits(b);
+}
+break;
+case TRA:
+if(instr->op1==0xe || instr->op1==0xf) { exe_err(cpu); err=1; return err; }
+int reg2=*op2reg(cpu, instr->op2);
+int reg1=*op2reg(cpu, instr->op1);
+// MPU: 数据指针解引用检查（*E 读代码空间，manual 未列入检查）
+if(instr->op2!=REG_E && instr->op_size>=1 && instr->op_size<=3) {
+	if(mem_check_data(cpu, (uint32_t)reg2, 1u<<(instr->op_size-1))) {
+		exe_err(cpu);
+		return 4;		// #GP
+	}
+}
+if(instr->op1!=REG_E && instr->op_size>=1 && instr->op_size<=3) {
+	if(mem_check_data(cpu, (uint32_t)reg1, 1u<<(instr->op_size-1))) {
+		exe_err(cpu);
+		return 4;		// #GP
+	}
+}
+if(instr->op1==REG_E) {
+	if(mem_check_code(cpu, (uint32_t)reg1, 1u<<(instr->op_size-1))) {
+		exe_err(cpu);
+		return 4;		// #GP
+	}
+}
+if(instr->op2==REG_E) {
+	if(mem_check_code(cpu, (uint32_t)reg2, 1u<<(instr->op_size-1))) {
+		exe_err(cpu);
+		return 4;		// #GP
+	}
+}
+switch(instr->op_size) {
+	case 1:
+		res=load_from_mem(cpu, (uint32_t)reg2, (instr->op2==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+		break;
+	case 2:
+		res=load_word_from_mem(cpu, (uint32_t)reg2, (instr->op2==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+		break;
+	case 3:
+		res=load_dword_from_mem(cpu, (uint32_t)reg2, (instr->op2==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+		break;
+	default:
+		exe_err(cpu);
+		err=1;
+		return err;
+}
+switch(instr->op_size) {
+	case 1:
+		set_mem(cpu, (uint32_t)reg1, (res&0xff), (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+		break;
+	case 2:
+		set_word_mem(cpu, (uint32_t)reg1, (res&0xffff), (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+		break;
+	case 3:
+		set_dword_mem(cpu, (uint32_t)reg1, res, (instr->op1==REG_E)?(MEM_TYPE_CODE):(MEM_TYPE_DATA));
+		break;
+	default:
+		exe_err(cpu);
+		err=1;
 }
 break;
 

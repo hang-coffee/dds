@@ -10,13 +10,13 @@
 - [x] 清理 Git 仓库中的目录迁移残留：移除旧顶层 `src/`、`tests/`、`tools/` 等已删除路径，保持工作区与目录结构一致
 - [x] 同步各 README 与实际实现：`doctor-sim/README.md` 已更新 DISK/dasm 反汇编等状态
 - [x] 增加一键端到端测试脚本：`run_tests.sh` 覆盖 dcc、dasm、doctor-sim、dlinker 等测试
-- [ ] 完善 `manual.md` 与 `doctor-sim/dev_specification.md`，确保与模拟器、dasm、dcc 实现严格同步
+- [x] 完善 `manual.md` 与 `doctor-sim/dev_specification.md`，确保与模拟器、dasm、dcc 实现严格同步
 
 ## doctor-sim：CPU / 中断 / 内存
 
 - [x] 调试器功能可增强：增加断点、单步、反汇编当前指令、内存/设备查看等
 - [ ] 补充 DFE/DDE 边界测试：NaN、Inf、±0、舍入模式、异常粘着位、FIE 中断
-- [ ] 对照 `manual.md` 检查指令编码示例、寄存器定义、中断/异常/MPU/浮点语义是否与模拟器一致
+- [x] 对照 `manual.md` 检查指令编码示例、寄存器定义、中断/异常/MPU/浮点语义是否与模拟器一致
 - [ ] `device_reset_all` 仍为预留接口，可完善设备复位语义并增加复位测试
 - [ ] MMIO 尚未进入当前设备规范；如未来要支持内存映射设备，应先扩展 `dev_specification.md`，再在 `mem.h` 访问路径中接入设备映射
 - [x] RTC 设备已在模拟器中实现（端口 `0x30`-`0x3D`，IRQ2，见 `dev_specification.md` 第 6 节）
@@ -59,7 +59,7 @@
 
 ### 未列端口
 
-- [ ] 按 `dev_specification.md` 总览：未列端口 `IN` 返回全 1、`OUT` 被忽略、设备不存在时报 `#II`；补充自动化测试覆盖
+- [x] 按 `dev_specification.md` 总览：未列端口 `IN` 返回全 1、`OUT` 被忽略、设备不存在时报 `#II`；补充自动化测试覆盖
 
 ## dasm
 
@@ -84,9 +84,9 @@
 - [x] 可变参数宏 `__VA_ARGS__` 已支持
 - [x] `switch` 支持 C 的 case 穿透（fallthrough）
 - [x] 字符字面量（`'A'`、`'\n'` 等）与八进制字面量（`052`）
-- [ ] 函数指针数组、返回函数指针的复杂声明符受限（可用 typedef 间接表达）
+- [x] 函数指针数组、返回函数指针的复杂声明符受限（可用 typedef 间接表达）
 - [ ] 栈顶固定为 `0x300000`，局部变量总量受栈空间限制；可改为可配置栈顶
-- [ ] 当前只做“正确翻译”，不做优化；后续可增加简单优化（如常量折叠、公共子表达式消除）
+- [x] 当前只做“正确翻译”，不做优化；后续可增加简单优化（如常量折叠、公共子表达式消除）
 - [ ] 调试信息尚未输出
 - [ ] 完整标准库仍未提供；当前为 freestanding 常用头文件加少量 hosted 头文件
 
@@ -109,6 +109,6 @@
 
 - [ ] 对照 `manual.md` 检查指令编码示例、寄存器定义、中断/异常/MPU/浮点语义是否与模拟器一致
 - [ ] 对照 `doctor-sim/dev_specification.md` 检查每个设备的端口、寄存器位、中断行为是否与实现一致
-- [ ] 为 DISK、RTC（若加入）、MMIO（若加入）、SVC/IRET 增加系统级端到端测试
+- [ ] 为 DISK、RTC、MMIO（若加入）、SVC/IRET 增加系统级端到端测试
 - [ ] 为 DFE/DDE 增加完整边界测试：NaN、Inf、±0、舍入模式、异常粘着位、FIE 中断
 - [ ] 增加从 C 源码到模拟器运行的一键演示/教程，降低使用门槛
